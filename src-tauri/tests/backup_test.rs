@@ -354,3 +354,34 @@ fn restore_rebuilds_successful_shortcuts_when_an_imported_shortcut_conflicts() {
         })
     );
 }
+
+#[test]
+fn absent_overlay_setting_still_conflicts_with_the_effective_default_and_rebuilds_consistently() {
+    let paths = test_paths("default-overlay-shortcut");
+    let port = ShortcutPortForRestore::default();
+    let registry = ShortcutRegistryHandle::new(port);
+    let mut repository = Repository::open(paths.clone()).unwrap();
+    repository.replace_snapshot(&snapshot()).unwrap();
+    let mut service =
+        BackupService::with_mutation_hook(repository, paths.clone(), registry.clone());
+    let import = paths.database.with_file_name("import.json");
+    let mut document = BackupDocumentV1::from_snapshot(&snapshot());
+    document
+        .library
+        .settings
+        .retain(|setting| setting.key != "overlay_shortcut");
+    document.library.phrases[0].hotkey = Some("Ctrl+Shift+Space".into());
+    write_document(&import, &document);
+
+    let preview = service.preview_import(&import).unwrap();
+    assert_eq!(preview.shortcut_conflict_count, 1);
+    service
+        .replace_from_backup(&import, &preview.preview_token)
+        .unwrap();
+    assert_eq!(
+        registry.event_for("Ctrl+Shift+Space"),
+        Some(ShortcutEvent::ShowOverlay {
+            open_template_phrase_id: None,
+        })
+    );
+}

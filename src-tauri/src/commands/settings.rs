@@ -8,12 +8,10 @@ use crate::db::models::SettingRecord;
 use crate::db::{Repository, RepositoryError};
 use crate::error::AppError;
 use crate::services::shortcuts::{
-    ShortcutAction, ShortcutError, ShortcutEvent, ShortcutMutationError, ShortcutPort,
-    ShortcutRegistryHandle, ShortcutsDto,
+    OVERLAY_SHORTCUT_KEY, ShortcutAction, ShortcutError, ShortcutEvent, ShortcutMutationError,
+    ShortcutPort, ShortcutRegistryHandle, ShortcutsDto, effective_overlay_shortcut,
 };
 use crate::services::templates::{TemplateService, TemplateToken};
-
-const OVERLAY_SHORTCUT_KEY: &str = "overlay_shortcut";
 
 pub struct TauriShortcutPort {
     app: AppHandle,
@@ -55,12 +53,7 @@ pub struct ShortcutSettingsService {
 impl ShortcutSettingsService {
     fn configured_shortcuts(&self) -> Result<ShortcutsDto, RepositoryError> {
         let snapshot = self.repository.snapshot()?;
-        let overlay = snapshot
-            .settings
-            .iter()
-            .find(|setting| setting.key == OVERLAY_SHORTCUT_KEY)
-            .map(|setting| setting.value.clone())
-            .unwrap_or_else(|| "Ctrl+Shift+Space".into());
+        let overlay = effective_overlay_shortcut(&snapshot).to_owned();
         let phrases = snapshot
             .phrases
             .into_iter()

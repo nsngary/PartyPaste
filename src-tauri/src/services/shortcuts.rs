@@ -8,8 +8,8 @@ use unicode_normalization::UnicodeNormalization;
 use crate::db::models::LibrarySnapshot;
 use crate::services::library::LibraryMutationHook;
 
-const DEFAULT_OVERLAY_SHORTCUT: &str = "Ctrl+Shift+Space";
-const OVERLAY_SHORTCUT_KEY: &str = "overlay_shortcut";
+pub const DEFAULT_OVERLAY_SHORTCUT: &str = "Ctrl+Shift+Space";
+pub const OVERLAY_SHORTCUT_KEY: &str = "overlay_shortcut";
 const MODIFIER_ORDER: [&str; 4] = ["Ctrl", "Alt", "Shift", "Meta"];
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -174,12 +174,7 @@ impl ShortcutRegistry {
     pub fn rebuild(&mut self, snapshot: &LibrarySnapshot) -> RebuildResult {
         self.shutdown();
         let mut result = RebuildResult::default();
-        let overlay = snapshot
-            .settings
-            .iter()
-            .find(|setting| setting.key == OVERLAY_SHORTCUT_KEY)
-            .map(|setting| setting.value.as_str())
-            .unwrap_or(DEFAULT_OVERLAY_SHORTCUT);
+        let overlay = effective_overlay_shortcut(snapshot);
         self.register_during_rebuild(ShortcutAction::Overlay, overlay, false, &mut result);
         for phrase in &snapshot.phrases {
             let Some(shortcut) = phrase.hotkey.as_deref() else {
@@ -290,6 +285,15 @@ impl ShortcutRegistry {
         }
         Ok(())
     }
+}
+
+pub fn effective_overlay_shortcut(snapshot: &LibrarySnapshot) -> &str {
+    snapshot
+        .settings
+        .iter()
+        .find(|setting| setting.key == OVERLAY_SHORTCUT_KEY)
+        .map(|setting| setting.value.as_str())
+        .unwrap_or(DEFAULT_OVERLAY_SHORTCUT)
 }
 
 impl Drop for ShortcutRegistry {

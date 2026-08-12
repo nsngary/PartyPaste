@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -186,17 +186,24 @@ impl BackupService {
     }
 
     fn read_validated(&self, path: &Path) -> Result<ValidatedDocument, BackupError> {
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > MAX_BACKUP_BYTES {
+        if fs::metadata(path)
+            .ok()
+            .is_some_and(|metadata| metadata.len() > MAX_BACKUP_BYTES)
+        {
             return Err(BackupError::Invalid);
         }
-        let bytes = fs::read(path)?;
-        if bytes.len() as u64 > MAX_BACKUP_BYTES {
-            return Err(BackupError::Invalid);
-        }
+        let canonical_path = fs::canonicalize(path)?;
+        self.read_validated_from_reader(&mut File::open(&canonical_path)?, canonical_path)
+    }
+
+    fn read_validated_from_reader(
+        &self,
+        reader: &mut impl Read,
+        canonical_path: PathBuf,
+    ) -> Result<ValidatedDocument, BackupError> {
+        let bytes = read_bounded(reader)?;
         let document = parse_versioned_document(&bytes)?;
         validate_snapshot(&document.library)?;
-        let canonical_path = fs::canonicalize(path)?;
         Ok(ValidatedDocument {
             fingerprint: fingerprint(&canonical_path, &bytes),
             canonical_path,
@@ -223,6 +230,22 @@ fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+fn read_bounded(reader: &mut impl Read) -> Result<Vec<u8>, BackupError> {
+    let maximum = MAX_BACKUP_BYTES as usize;
+    let mut bytes = Vec::with_capacity(maximum + 1);
+    let mut chunk = [0u8; 8 * 1024];
+    while bytes.len() <= maximum {
+        let remaining = maximum + 1 - bytes.len();
+        let chunk_length = remaining.min(chunk.len());
+        let read = reader.read(&mut chunk[..chunk_length])?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    Err(BackupError::Invalid)
 }
 
 fn write_document_atomically(path: &Path, document: &BackupDocumentV1) -> Result<(), BackupError> {
@@ -562,18 +585,15 @@ fn normalize_name(name: &str) -> String {
 fn shortcut_conflict_count(snapshot: &LibrarySnapshot) -> usize {
     let mut bindings = HashSet::new();
     let mut conflicts = 0;
-    for shortcut in snapshot
-        .settings
-        .iter()
-        .filter(|setting| setting.key == "overlay_shortcut")
-        .map(|setting| setting.value.as_str())
-        .chain(
-            snapshot
-                .phrases
-                .iter()
-                .filter_map(|phrase| phrase.hotkey.as_deref()),
-        )
-    {
+    for shortcut in std::iter::once(crate::services::shortcuts::effective_overlay_shortcut(
+        snapshot,
+    ))
+    .chain(
+        snapshot
+            .phrases
+            .iter()
+            .filter_map(|phrase| phrase.hotkey.as_deref()),
+    ) {
         let normalized = crate::services::shortcuts::normalize_shortcut(shortcut);
         let has_modifier = normalized
             .split('+')
@@ -583,4 +603,68 @@ fn shortcut_conflict_count(snapshot: &LibrarySnapshot) -> usize {
         }
     }
     conflicts
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read};
+    use std::path::PathBuf;
+
+    use crate::db::Repository;
+    use crate::paths::DataPaths;
+
+    use super::{BackupError, BackupService, MAX_BACKUP_BYTES};
+
+    struct OversizedReader {
+        remaining: usize,
+        requested: Vec<usize>,
+    }
+
+    impl OversizedReader {
+        fn new() -> Self {
+            Self {
+                remaining: MAX_BACKUP_BYTES as usize + 2,
+                requested: Vec::new(),
+            }
+        }
+    }
+
+    impl Read for OversizedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.requested.push(buffer.len());
+            let read = buffer.len().min(self.remaining);
+            buffer[..read].fill(b'x');
+            self.remaining -= read;
+            Ok(read)
+        }
+    }
+
+    #[test]
+    fn bounded_reader_rejects_over_limit_without_changing_state_or_requesting_unbounded_memory() {
+        let mut reader = OversizedReader::new();
+        let paths = DataPaths {
+            database: PathBuf::from("unknown.db"),
+            backups: PathBuf::from("unknown-backups"),
+            logs: PathBuf::from("unknown-logs"),
+            portable: false,
+        };
+        let service = BackupService::new(Repository::in_memory().unwrap(), paths);
+        let before = serde_json::to_vec(&service.snapshot().unwrap()).unwrap();
+
+        assert!(matches!(
+            service.read_validated_from_reader(&mut reader, PathBuf::from("unknown.json")),
+            Err(BackupError::Invalid)
+        ));
+        assert_eq!(
+            serde_json::to_vec(&service.snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert!(
+            reader
+                .requested
+                .iter()
+                .all(|requested| *requested <= MAX_BACKUP_BYTES as usize + 1)
+        );
+        assert!(reader.requested.iter().sum::<usize>() <= MAX_BACKUP_BYTES as usize + 1);
+    }
 }
