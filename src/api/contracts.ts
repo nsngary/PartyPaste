@@ -42,3 +42,65 @@ export interface ShortcutsDto {
 export type ShortcutEvent =
   | { type: "copy_phrase"; phraseId: string }
   | { type: "show_overlay"; openTemplatePhraseId: string | null };
+
+export interface BackupLibrarySnapshot {
+  games: Array<{
+    id: string;
+    name: string;
+    sortOrder: number;
+    overlayDisplayMode: "title" | "full";
+  }>;
+  groups: Array<{
+    id: string;
+    gameId: string;
+    name: string;
+    collapsed: boolean;
+    sortOrder: number;
+  }>;
+  phrases: Array<{
+    id: string;
+    groupId: string;
+    title: string;
+    bodyTemplate: string;
+    favorite: boolean;
+    favoriteOrder: number | null;
+    hotkey: string | null;
+    sortOrder: number;
+  }>;
+  variableDefinitions: Array<{
+    id: string;
+    gameId: string;
+    name: string;
+    normalizedName: string;
+    sortOrder: number;
+  }>;
+  variablePresets: Array<{
+    id: string;
+    variableDefinitionId: string;
+    value: string;
+    sortOrder: number;
+  }>;
+  phraseVariableRefs: Array<{
+    phraseId: string;
+    variableDefinitionId: string;
+    tokenOrder: number;
+  }>;
+  settings: Array<{ key: string; value: string }>;
+}
+
+export interface BackupDocumentV1 {
+  schemaVersion: 1;
+  library: BackupLibrarySnapshot;
+}
+
+export interface ImportPreviewDto {
+  previewToken: string;
+  expiresAt: number;
+  gameCount: number;
+  groupCount: number;
+  phraseCount: number;
+  variableDefinitionCount: number;
+  variablePresetCount: number;
+  phraseVariableRefCount: number;
+  shortcutConflictCount: number;
+}

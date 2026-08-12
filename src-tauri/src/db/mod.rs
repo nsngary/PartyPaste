@@ -4,6 +4,7 @@ mod repository;
 
 use thiserror::Error;
 
+pub(crate) use migrations::BACKUP_SCHEMA_VERSION;
 pub use models::LibrarySnapshot;
 pub use repository::{LibraryTx, Repository};
 

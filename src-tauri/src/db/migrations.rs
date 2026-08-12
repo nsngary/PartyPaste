@@ -5,6 +5,8 @@ use super::RepositoryError;
 
 const INITIAL_SCHEMA: &str = include_str!("../../migrations/0001_initial.sql");
 
+pub(crate) const BACKUP_SCHEMA_VERSION: u8 = 1;
+
 fn migrations() -> Migrations<'static> {
     Migrations::new(vec![M::up(INITIAL_SCHEMA)])
 }
