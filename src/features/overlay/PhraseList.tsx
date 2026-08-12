@@ -12,7 +12,7 @@ interface GroupView {
 export interface PhraseListProps {
   groups: GroupView[];
   mode: "title" | "full";
-  onOpenPhrase: (phrase: PhraseDto) => void;
+  onOpenPhrase: (phrase: PhraseDto, trigger: HTMLButtonElement) => void;
   onToggleGroup: (group: GroupDto) => void;
   renderAfterPhrase?: (phrase: PhraseDto) => ReactNode;
 }

@@ -196,9 +196,17 @@ pub fn route_shortcut(app: &AppHandle, accelerator: &str) {
                 .try_state::<ClipboardServiceState>()
                 .is_some_and(|clipboard| clipboard.copy_plain_shortcut(phrase_id).is_ok());
             if !copied {
+                let _ = app.emit_to(
+                    "overlay",
+                    "shortcut-action",
+                    ShortcutEvent::CopyPhraseFailed {
+                        phrase_id: phrase_id.clone(),
+                    },
+                );
                 return;
             }
         }
+        ShortcutEvent::CopyPhraseFailed { .. } => return,
         ShortcutEvent::ShowOverlay { .. } => {
             if let Some(overlay) = app.get_webview_window("overlay") {
                 let _ = overlay.show();

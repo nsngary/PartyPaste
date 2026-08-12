@@ -43,6 +43,7 @@
     "recent": "Recent copies",
     "show": "Show overlay",
     "templateIncomplete": "Complete every variable before copying.",
+    "templateInvalid": "This template is invalid and cannot be copied.",
     "titleOnly": "Title only"
   },
   "manager": {

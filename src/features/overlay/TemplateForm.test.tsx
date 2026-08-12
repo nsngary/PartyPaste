@@ -52,4 +52,24 @@ describe("inline template form", () => {
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("shows malformed templates as invalid without presenting a preview", () => {
+    render(
+      <AppProviders i18n={createPartyPasteI18n("en")}>
+        <TemplateForm
+          bodyTemplate="Need {count"
+          onClose={() => undefined}
+          onCopy={() => undefined}
+          presets={{}}
+          title="Broken invite"
+        />
+      </AppProviders>,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("invalid");
+    expect(screen.queryByText("Preview")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Copy" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
 });

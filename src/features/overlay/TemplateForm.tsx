@@ -37,6 +37,7 @@ export function TemplateForm({
   );
   const [values, setValues] = useState<Record<string, string>>({});
   const resolution = resolveTemplate(parsed.tokens, values);
+  const malformed = parsed.issues.length > 0;
 
   useEffect(() => {
     if (autoFocus) firstInput.current?.focus();
@@ -98,14 +99,20 @@ export function TemplateForm({
             />
           </div>
         ))}
-        <div className="pp-template-preview">
-          <span>{t("overlay.preview")}</span>
-          <output>{resolution.ok ? resolution.value : bodyTemplate}</output>
-        </div>
-        <Button disabled={!resolution.ok} type="submit">
+        {malformed ? (
+          <p className="pp-template-form__error" role="alert">
+            {t("overlay.templateInvalid")}
+          </p>
+        ) : (
+          <div className="pp-template-preview">
+            <span>{t("overlay.preview")}</span>
+            <output>{resolution.ok ? resolution.value : bodyTemplate}</output>
+          </div>
+        )}
+        <Button disabled={malformed || !resolution.ok} type="submit">
           {t("common.copy")}
         </Button>
-        {!resolution.ok ? (
+        {!malformed && !resolution.ok ? (
           <p className="pp-template-form__hint">
             {t("overlay.templateIncomplete")}
           </p>

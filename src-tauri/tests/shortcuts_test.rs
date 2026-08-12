@@ -199,6 +199,9 @@ fn shortcut_events_serialize_with_the_shared_camel_case_contract() {
         ShortcutEvent::CopyPhrase {
             phrase_id: "plain".into(),
         },
+        ShortcutEvent::CopyPhraseFailed {
+            phrase_id: "plain".into(),
+        },
         ShortcutEvent::ShowOverlay {
             open_template_phrase_id: Some("template".into()),
         },
@@ -209,6 +212,22 @@ fn shortcut_events_serialize_with_the_shared_camel_case_contract() {
     .unwrap();
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn shortcut_copy_failure_event_contains_only_a_retryable_phrase_id() {
+    let event = serde_json::to_value(ShortcutEvent::CopyPhraseFailed {
+        phrase_id: "plain".into(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        event,
+        serde_json::json!({
+            "type": "copy_phrase_failed",
+            "phraseId": "plain"
+        })
+    );
 }
 
 #[test]

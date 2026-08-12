@@ -68,6 +68,26 @@ fn game_display_mode_updates_without_renaming_the_game() {
 }
 
 #[test]
+fn group_collapse_update_preserves_a_concurrent_manager_rename() {
+    let now = Arc::new(AtomicU64::new(1_000));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Guild Wars");
+    create_group(&mut service, "group", "game", "Raids");
+    service
+        .update_group(UpdateGroupInput {
+            id: "group".into(),
+            name: "Current raids".into(),
+            collapsed: false,
+        })
+        .unwrap();
+
+    let updated = service.set_group_collapsed("group", true).unwrap();
+
+    assert_eq!(updated.name, "Current raids");
+    assert!(updated.collapsed);
+}
+
+#[test]
 fn library_crud_normalizes_unicode_and_enforces_exact_scalar_limits() {
     let now = Arc::new(AtomicU64::new(1_000));
     let mut service = service_at(now);

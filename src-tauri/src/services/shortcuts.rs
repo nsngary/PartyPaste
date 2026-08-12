@@ -26,6 +26,10 @@ pub enum ShortcutEvent {
         #[serde(rename = "phraseId")]
         phrase_id: String,
     },
+    CopyPhraseFailed {
+        #[serde(rename = "phraseId")]
+        phrase_id: String,
+    },
     ShowOverlay {
         #[serde(rename = "openTemplatePhraseId")]
         open_template_phrase_id: Option<String>,

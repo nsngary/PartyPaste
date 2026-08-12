@@ -160,6 +160,8 @@ export function createLibraryApi(
       call<CreateGroupInput, MutationResult<GroupDto>>("create_group", input),
     updateGroup: (input: UpdateGroupInput) =>
       call<UpdateGroupInput, MutationResult<GroupDto>>("update_group", input),
+    setGroupCollapsed: (input: { groupId: string; collapsed: boolean }) =>
+      call<typeof input, GroupDto>("set_group_collapsed", input),
     deleteGroup: (input: { groupId: string }) =>
       call<typeof input, MutationResult<LibrarySnapshot>>(
         "delete_group",

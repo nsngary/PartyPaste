@@ -97,6 +97,18 @@ pub fn update_group(
 }
 
 #[tauri::command]
+pub fn set_group_collapsed(
+    state: State<'_, LibraryServiceState>,
+    group_id: String,
+    collapsed: bool,
+) -> Result<GroupRecord, AppError> {
+    state
+        .lock()?
+        .set_group_collapsed(&group_id, collapsed)
+        .map_err(library_error)
+}
+
+#[tauri::command]
 pub fn delete_group(
     state: State<'_, LibraryServiceState>,
     group_id: String,

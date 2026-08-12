@@ -1,5 +1,6 @@
 [
   { "type": "copy_phrase", "phraseId": "plain" },
+  { "type": "copy_phrase_failed", "phraseId": "plain" },
   { "type": "show_overlay", "openTemplatePhraseId": "template" },
   { "type": "show_overlay", "openTemplatePhraseId": null }
 ]

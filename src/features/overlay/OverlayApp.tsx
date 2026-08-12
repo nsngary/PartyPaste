@@ -9,6 +9,7 @@ import { OverlayHeader } from "./OverlayHeader";
 import { PhraseList } from "./PhraseList";
 import { RecentCopies } from "./RecentCopies";
 import { TemplateForm } from "./TemplateForm";
+import { presetsForPhrase } from "./template-presets";
 
 type Unlisten = () => void;
 
@@ -18,8 +19,9 @@ export interface OverlayLibraryApi {
     gameId: string;
     displayMode: GameDto["overlayDisplayMode"];
   }) => Promise<unknown>;
-  updateGroup: (input: {
-    input: { id: string; name: string; collapsed: boolean };
+  setGroupCollapsed: (input: {
+    groupId: string;
+    collapsed: boolean;
   }) => Promise<unknown>;
 }
 
@@ -33,7 +35,13 @@ export interface OverlayCopyApi {
 
 export type ShortcutEventPayload =
   | { type: "copy_phrase"; phraseId: string }
+  | { type: "copy_phrase_failed"; phraseId: string }
   | { type: "show_overlay"; openTemplatePhraseId: string | null };
+
+interface CopyRequest {
+  phraseId: string;
+  variables: Record<string, string>;
+}
 
 export interface OverlayAppProps {
   copyApi: OverlayCopyApi;
@@ -61,10 +69,15 @@ export function OverlayApp({
   const [shortcutOpenedTemplateId, setShortcutOpenedTemplateId] = useState<
     string | null
   >(null);
-  const retryPhraseId = useRef<string | null>(null);
-  const libraryRef = useRef<LibrarySnapshot | null>(null);
-
-  libraryRef.current = library;
+  const [pendingShortcutTemplateId, setPendingShortcutTemplateId] = useState<
+    string | null
+  >(null);
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [failedRequest, setFailedRequest] = useState<CopyRequest | null>(null);
+  const requestSequence = useRef(0);
+  const templateTrigger = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -90,7 +103,7 @@ export function OverlayApp({
     void copyApi
       .getRecentCopies()
       .then((items) => {
-        if (active) setRecent(items);
+        if (active) setRecent(items.slice(0, 30));
       })
       .catch(() => undefined);
     return () => {
@@ -115,15 +128,14 @@ export function OverlayApp({
           .catch(() => undefined);
         return;
       }
+      if (event.type === "copy_phrase_failed") {
+        requestSequence.current += 1;
+        setFailedRequest({ phraseId: event.phraseId, variables: {} });
+        setFeedback("error");
+        return;
+      }
       if (event.type === "show_overlay" && event.openTemplatePhraseId) {
-        const snapshot = libraryRef.current;
-        const phrase = snapshot?.phrases.find(
-          ({ id }) => id === event.openTemplatePhraseId,
-        );
-        const group = snapshot?.groups.find(({ id }) => id === phrase?.groupId);
-        if (group) setSelectedGameId(group.gameId);
-        setOpenTemplatePhraseId(event.openTemplatePhraseId);
-        setShortcutOpenedTemplateId(event.openTemplatePhraseId);
+        setPendingShortcutTemplateId(event.openTemplatePhraseId);
       }
     }).then((stop) => {
       if (active) unlisten = stop;
@@ -134,6 +146,21 @@ export function OverlayApp({
       unlisten?.();
     };
   }, [copyApi, subscribeToShortcutEvents]);
+
+  useEffect(() => {
+    if (!library || !pendingShortcutTemplateId) return;
+    const phrase = library.phrases.find(
+      ({ id }) => id === pendingShortcutTemplateId,
+    );
+    const group = library.groups.find(({ id }) => id === phrase?.groupId);
+    if (!phrase || !group) return;
+    setSelectedGameId(group.gameId);
+    templateTrigger.current = null;
+    setExpandedGroupIds((current) => new Set(current).add(group.id));
+    setOpenTemplatePhraseId(phrase.id);
+    setShortcutOpenedTemplateId(phrase.id);
+    setPendingShortcutTemplateId(null);
+  }, [library, pendingShortcutTemplateId]);
 
   const selectedGame = library?.games.find(({ id }) => id === selectedGameId);
   const gameGroupIds = useMemo(
@@ -152,28 +179,19 @@ export function OverlayApp({
       .filter(({ gameId }) => gameId === selectedGameId)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((group) => ({
-        group,
+        group: expandedGroupIds.has(group.id)
+          ? { ...group, collapsed: false }
+          : group,
         phrases: phrases
           .filter(({ groupId }) => groupId === group.id)
           .sort((a, b) => a.sortOrder - b.sortOrder),
       })) ?? [];
   const openTemplate = phrases.find(({ id }) => id === openTemplatePhraseId);
-  const templatePresets = useMemo(() => {
-    const definitions = new Map(
-      (library?.variableDefinitions ?? [])
-        .filter(({ gameId }) => gameId === selectedGameId)
-        .map((definition) => [definition.id, definition]),
-    );
-    const values: Record<string, string[]> = {};
-    for (const preset of library?.variablePresets ?? []) {
-      const definition = definitions.get(preset.variableDefinitionId);
-      if (!definition) continue;
-      const existingValues = values[definition.name] ?? [];
-      existingValues.push(preset.value);
-      values[definition.name] = existingValues;
-    }
-    return values;
-  }, [library, selectedGameId]);
+  const templatePresets = useMemo(
+    () =>
+      library && openTemplate ? presetsForPhrase(library, openTemplate) : {},
+    [library, openTemplate],
+  );
 
   function selectDisplayMode(mode: GameDto["overlayDisplayMode"]) {
     if (!library || !selectedGame || mode === selectedGame.overlayDisplayMode)
@@ -219,9 +237,7 @@ export function OverlayApp({
     });
     setPreferenceError(false);
     void libraryApi
-      .updateGroup({
-        input: { id: group.id, name: group.name, collapsed },
-      })
+      .setGroupCollapsed({ groupId: group.id, collapsed })
       .catch(() => {
         setLibrary((current) =>
           current
@@ -237,18 +253,30 @@ export function OverlayApp({
       });
   }
 
-  const copyPlainPhrase = useCallback(
-    async (phraseId: string) => {
-      retryPhraseId.current = phraseId;
+  const copyRequest = useCallback(
+    async (request: CopyRequest) => {
+      const sequence = ++requestSequence.current;
       try {
-        const result = await copyApi.copyPhrase({ phraseId, variables: {} });
-        setRecent((items) => [
-          result,
-          ...items.filter((item) => item.resolvedAt !== result.resolvedAt),
-        ]);
+        await copyApi.copyPhrase(request);
+        if (sequence !== requestSequence.current) return false;
+        try {
+          const items = await copyApi.getRecentCopies();
+          if (sequence !== requestSequence.current) return false;
+          setRecent(items.slice(0, 30));
+        } catch {
+          // Clipboard success remains success even if session history cannot refresh.
+        }
+        setFailedRequest(null);
         setFeedback("success");
+        return true;
       } catch {
+        if (sequence !== requestSequence.current) return false;
+        setFailedRequest({
+          phraseId: request.phraseId,
+          variables: { ...request.variables },
+        });
         setFeedback("error");
+        return false;
       }
     },
     [copyApi],
@@ -260,17 +288,28 @@ export function OverlayApp({
     return () => window.clearTimeout(timeout);
   }, [feedback]);
 
-  function openPhrase(phrase: LibrarySnapshot["phrases"][number]) {
+  function closeTemplate() {
+    setOpenTemplatePhraseId(null);
+    setShortcutOpenedTemplateId(null);
+    const trigger = templateTrigger.current;
+    window.setTimeout(() => trigger?.focus(), 0);
+  }
+
+  function openPhrase(
+    phrase: LibrarySnapshot["phrases"][number],
+    trigger: HTMLButtonElement,
+  ) {
     if (
       parseTemplate(phrase.bodyTemplate).tokens.some(
         ({ type }) => type === "variable",
       )
     ) {
+      templateTrigger.current = trigger;
       setOpenTemplatePhraseId(phrase.id);
       setShortcutOpenedTemplateId(null);
       return;
     }
-    void copyPlainPhrase(phrase.id);
+    void copyRequest({ phraseId: phrase.id, variables: {} });
   }
 
   return (
@@ -318,23 +357,13 @@ export function OverlayApp({
                   autoFocus={shortcutOpenedTemplateId === openTemplate.id}
                   bodyTemplate={openTemplate.bodyTemplate}
                   key={openTemplate.id}
-                  onClose={() => {
-                    setOpenTemplatePhraseId(null);
-                    setShortcutOpenedTemplateId(null);
-                  }}
+                  onClose={closeTemplate}
                   onCopy={async (variables) => {
-                    retryPhraseId.current = openTemplate.id;
-                    try {
-                      const result = await copyApi.copyPhrase({
-                        phraseId: openTemplate.id,
-                        variables,
-                      });
-                      setRecent((items) => [result, ...items]);
-                      setFeedback("success");
-                      setOpenTemplatePhraseId(null);
-                    } catch {
-                      setFeedback("error");
-                    }
+                    const copied = await copyRequest({
+                      phraseId: openTemplate.id,
+                      variables,
+                    });
+                    if (copied) closeTemplate();
                   }}
                   presets={templatePresets}
                   title={openTemplate.title}
@@ -348,8 +377,7 @@ export function OverlayApp({
       <CopyFeedback
         state={feedback}
         onRetry={() => {
-          const phraseId = retryPhraseId.current;
-          if (phraseId) void copyPlainPhrase(phraseId);
+          if (failedRequest) void copyRequest(failedRequest);
         }}
       />
       {preferenceError ? (

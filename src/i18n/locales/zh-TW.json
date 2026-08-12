@@ -43,6 +43,7 @@
     "recent": "最近複製",
     "show": "顯示浮動視窗",
     "templateIncomplete": "請填完所有變數後再複製。",
+    "templateInvalid": "這個範本格式無效，無法複製。",
     "titleOnly": "僅顯示標題"
   },
   "manager": {

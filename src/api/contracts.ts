@@ -41,6 +41,7 @@ export interface ShortcutsDto {
 
 export type ShortcutEvent =
   | { type: "copy_phrase"; phraseId: string }
+  | { type: "copy_phrase_failed"; phraseId: string }
   | { type: "show_overlay"; openTemplatePhraseId: string | null };
 
 export interface BackupLibrarySnapshot {

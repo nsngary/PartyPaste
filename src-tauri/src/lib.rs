@@ -67,6 +67,7 @@ pub fn run() {
             commands::library::delete_game,
             commands::library::create_group,
             commands::library::update_group,
+            commands::library::set_group_collapsed,
             commands::library::delete_group,
             commands::library::create_phrase,
             commands::library::update_phrase,

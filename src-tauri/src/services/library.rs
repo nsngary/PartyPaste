@@ -544,6 +544,23 @@ impl LibraryService {
         })
     }
 
+    pub fn set_group_collapsed(
+        &mut self,
+        group_id: &str,
+        collapsed: bool,
+    ) -> Result<GroupRecord, LibraryServiceError> {
+        let mut record = self
+            .repository
+            .snapshot()?
+            .groups
+            .into_iter()
+            .find(|group| group.id == group_id)
+            .ok_or(LibraryServiceError::NotFound)?;
+        record.collapsed = collapsed;
+        self.repository.transaction(|tx| tx.update_group(&record))?;
+        Ok(record)
+    }
+
     pub fn create_phrase(
         &mut self,
         input: CreatePhraseInput,

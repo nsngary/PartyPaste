@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -92,7 +94,7 @@ function makeProps(overrides: Partial<OverlayAppProps> = {}): OverlayAppProps {
       setOverlayDisplayMode: vi.fn().mockResolvedValue({
         value: { ...snapshot.games[0], overlayDisplayMode: "full" },
       }),
-      updateGroup: vi.fn(),
+      setGroupCollapsed: vi.fn(),
     },
     copyApi: {
       copyPhrase: vi.fn(),
@@ -135,11 +137,11 @@ describe("gameplay overlay", () => {
 
   it("switches games, persists collapsed groups, and never duplicates favorites", async () => {
     const user = userEvent.setup();
-    const updateGroup = vi.fn().mockResolvedValue({});
+    const setGroupCollapsed = vi.fn().mockResolvedValue({});
     const props = makeProps({
       libraryApi: {
         ...makeProps().libraryApi,
-        updateGroup,
+        setGroupCollapsed,
       },
     });
     renderOverlay(props);
@@ -156,15 +158,18 @@ describe("gameplay overlay", () => {
     expect(
       screen.getByRole("button", { name: "Selling materials" }),
     ).toBeTruthy();
-    expect(updateGroup).toHaveBeenCalledWith({
-      input: { id: "group-two", name: "Trading", collapsed: false },
+    expect(setGroupCollapsed).toHaveBeenCalledWith({
+      groupId: "group-two",
+      collapsed: false,
     });
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Games" }),
       "game-two",
     );
-    expect(screen.getByRole("button", { name: "Join the hunt" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Join the hunt Join my hunt." }),
+    ).toBeTruthy();
     expect(screen.getByText("Join my hunt.")).toBeTruthy();
     expect(screen.queryByText("Ready check")).toBeNull();
   });
@@ -189,7 +194,17 @@ describe("gameplay overlay", () => {
     const props = makeProps({
       copyApi: {
         copyPhrase,
-        getRecentCopies: vi.fn().mockResolvedValue([]),
+        getRecentCopies: vi
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            {
+              phraseId: "plain",
+              title: "Ready check",
+              resolvedAt: 1,
+              resolvedText: "Everyone ready?",
+            },
+          ]),
       },
     });
     renderOverlay(props);
@@ -211,6 +226,145 @@ describe("gameplay overlay", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(copyPhrase).toHaveBeenCalledTimes(3));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("retries the exact failed template request and the current later failure", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{
+      phraseId: string;
+      variables: Record<string, string>;
+    }> = [];
+    const copyPhrase = vi.fn(async (request) => {
+      requests.push(request);
+      throw new Error("clipboard busy");
+    });
+    const templateSnapshot = {
+      ...snapshot,
+      phrases: [
+        {
+          ...snapshot.phrases[0],
+          id: "template",
+          title: "Invite",
+          bodyTemplate: "Need {count}",
+        },
+        {
+          ...snapshot.phrases[1],
+          id: "other",
+          groupId: "group-one",
+          title: "Other",
+          bodyTemplate: "Other",
+        },
+      ],
+    };
+    renderOverlay(
+      makeProps({
+        libraryApi: {
+          ...makeProps().libraryApi,
+          getLibrary: vi.fn().mockResolvedValue(templateSnapshot),
+        },
+        copyApi: { copyPhrase, getRecentCopies: vi.fn().mockResolvedValue([]) },
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Invite" }));
+    await user.type(screen.getByRole("textbox", { name: "count" }), "7");
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toEqual({
+      phraseId: "template",
+      variables: { count: "7" },
+    });
+    await user.click(screen.getByRole("button", { name: "Other" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(requests.at(-1)).toEqual({ phraseId: "other", variables: {} });
+    expect(requests[0]).toEqual({
+      phraseId: "template",
+      variables: { count: "7" },
+    });
+  });
+
+  it("does not let an older overlapping failure replace the current retry target", async () => {
+    const user = userEvent.setup();
+    const rejections: Array<(error: Error) => void> = [];
+    const copyPhrase = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejections.push(reject);
+        }),
+    );
+    const overlapSnapshot: LibrarySnapshot = {
+      ...snapshot,
+      phrases: [
+        {
+          ...snapshot.phrases[0],
+          id: "first",
+          title: "First",
+          bodyTemplate: "First",
+        },
+        {
+          ...snapshot.phrases[1],
+          id: "second",
+          groupId: "group-one",
+          title: "Second",
+          bodyTemplate: "Second",
+        },
+      ],
+    };
+    renderOverlay(
+      makeProps({
+        libraryApi: {
+          ...makeProps().libraryApi,
+          getLibrary: vi.fn().mockResolvedValue(overlapSnapshot),
+        },
+        copyApi: { copyPhrase, getRecentCopies: vi.fn().mockResolvedValue([]) },
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "First" }));
+    await user.click(screen.getByRole("button", { name: "Second" }));
+    rejections[1](new Error("second failed"));
+    await screen.findByRole("alert");
+    rejections[0](new Error("first failed later"));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(copyPhrase).toHaveBeenLastCalledWith({
+      phraseId: "second",
+      variables: {},
+    });
+  });
+
+  it("caps recent copies to the native thirty-item result after success", async () => {
+    const user = userEvent.setup();
+    const nativeRecent = Array.from({ length: 30 }, (_, index) => ({
+      phraseId: `p-${index}`,
+      title: `Phrase ${index}`,
+      resolvedAt: index,
+      resolvedText: `Text ${index}`,
+    }));
+    const getRecentCopies = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(nativeRecent);
+    renderOverlay(
+      makeProps({
+        copyApi: {
+          copyPhrase: vi.fn().mockResolvedValue({
+            phraseId: "plain",
+            title: "Ready check",
+            resolvedAt: 31,
+            resolvedText: "Everyone ready?",
+          }),
+          getRecentCopies,
+        },
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Ready check" }),
+    );
+    await waitFor(() => expect(getRecentCopies).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "Recent copies" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(30);
   });
 
   it("opens the exact template requested by a shortcut and discards values on Escape", async () => {
@@ -286,6 +440,157 @@ describe("gameplay overlay", () => {
     ).toBe("");
   });
 
+  it("queues an early shortcut and opens a collapsed nonfavorite template after load", async () => {
+    let resolveLibrary: (value: LibrarySnapshot) => void = () => undefined;
+    const library = new Promise<LibrarySnapshot>((resolve) => {
+      resolveLibrary = resolve;
+    });
+    let shortcutHandler:
+      | ((event: {
+          type: "show_overlay";
+          openTemplatePhraseId: string | null;
+        }) => void)
+      | undefined;
+    const earlySnapshot: LibrarySnapshot = {
+      ...snapshot,
+      phrases: [
+        {
+          ...snapshot.phrases[1],
+          id: "hidden-template",
+          favorite: false,
+          title: "Hidden form",
+          bodyTemplate: "Need {count}",
+        },
+      ],
+    };
+    renderOverlay(
+      makeProps({
+        libraryApi: {
+          ...makeProps().libraryApi,
+          getLibrary: vi.fn().mockReturnValue(library),
+        },
+        subscribeToShortcutEvents: vi.fn(async (handler) => {
+          shortcutHandler = handler;
+          return () => undefined;
+        }),
+      }),
+    );
+    await waitFor(() => expect(shortcutHandler).toBeTruthy());
+    shortcutHandler?.({
+      type: "show_overlay",
+      openTemplatePhraseId: "hidden-template",
+    });
+    resolveLibrary(earlySnapshot);
+
+    const form = await screen.findByRole("group", { name: "Hidden form" });
+    expect(form.contains(document.activeElement)).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: "Trading" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("turns a sanitized native shortcut-copy failure into a retryable request", async () => {
+    const user = userEvent.setup();
+    let shortcutHandler:
+      | ((event: { type: "copy_phrase_failed"; phraseId: string }) => void)
+      | undefined;
+    const copyPhrase = vi.fn().mockResolvedValue({
+      phraseId: "plain",
+      title: "Ready check",
+      resolvedAt: 4,
+      resolvedText: "Everyone ready?",
+    });
+    renderOverlay(
+      makeProps({
+        copyApi: {
+          copyPhrase,
+          getRecentCopies: vi.fn().mockResolvedValue([]),
+        },
+        subscribeToShortcutEvents: vi.fn(async (handler) => {
+          shortcutHandler = handler;
+          return () => undefined;
+        }),
+      }),
+    );
+    await waitFor(() => expect(shortcutHandler).toBeTruthy());
+    shortcutHandler?.({ type: "copy_phrase_failed", phraseId: "plain" });
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Clipboard is unavailable",
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(copyPhrase).toHaveBeenCalledWith({
+      phraseId: "plain",
+      variables: {},
+    });
+  });
+
+  it("maps normalized variable identities to presets and restores row focus on close", async () => {
+    const user = userEvent.setup();
+    const normalizedSnapshot: LibrarySnapshot = {
+      ...snapshot,
+      phrases: [
+        {
+          ...snapshot.phrases[0],
+          id: "normalized",
+          title: "Normalized",
+          bodyTemplate: "Need {ＣＯＵＮＴ}",
+        },
+      ],
+      variableDefinitions: [
+        {
+          id: "definition",
+          gameId: "game-one",
+          name: "Count",
+          normalizedName: "count",
+          sortOrder: 0,
+        },
+      ],
+      variablePresets: [
+        {
+          id: "preset",
+          variableDefinitionId: "definition",
+          value: "4",
+          sortOrder: 0,
+        },
+      ],
+      phraseVariableRefs: [
+        {
+          phraseId: "normalized",
+          variableDefinitionId: "definition",
+          tokenOrder: 0,
+        },
+      ],
+    };
+    renderOverlay(
+      makeProps({
+        libraryApi: {
+          ...makeProps().libraryApi,
+          getLibrary: vi.fn().mockResolvedValue(normalizedSnapshot),
+        },
+      }),
+    );
+    const trigger = await screen.findByRole("button", { name: "Normalized" });
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: "4" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("uses title-only and full-sentence accessible names", async () => {
+    const user = userEvent.setup();
+    renderOverlay();
+    await screen.findByRole("button", { name: "Ready check" });
+    expect(
+      screen.queryByRole("button", { name: "Ready check Everyone ready?" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "Full sentence" }));
+    expect(
+      screen.getByRole("button", { name: "Ready check Everyone ready?" }),
+    ).toBeTruthy();
+  });
+
   it.each([240, 300, 420])(
     "keeps compact controls accessible at %i CSS pixels",
     async (width) => {
@@ -296,6 +601,16 @@ describe("gameplay overlay", () => {
       });
       window.dispatchEvent(new Event("resize"));
       await screen.findByRole("button", { name: "Ready check" });
+
+      const overlayCss = readFileSync(
+        resolve("src/styles/overlay.css"),
+        "utf8",
+      );
+      expect(overlayCss).toContain("min-width: 240px");
+      expect(overlayCss).toMatch(/min-height:\s*32px/);
+      expect(container.querySelector("main")?.scrollWidth).toBeLessThanOrEqual(
+        container.querySelector("main")?.clientWidth || width,
+      );
 
       const results = await axe.run(container, {
         rules: { "color-contrast": { enabled: false } },

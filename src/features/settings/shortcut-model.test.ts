@@ -5,7 +5,10 @@ import { normalizeShortcut, shortcutValidationError } from "./shortcut-model";
 
 const typedShortcutEvents: ShortcutEvent[] = shortcutEventFixtures.map(
   (event) => {
-    if (event.type === "copy_phrase" && typeof event.phraseId === "string") {
+    if (
+      (event.type === "copy_phrase" || event.type === "copy_phrase_failed") &&
+      typeof event.phraseId === "string"
+    ) {
       return { type: event.type, phraseId: event.phraseId };
     }
     if (
@@ -44,6 +47,7 @@ describe("shortcut model", () => {
   it("shares the camelCase native event contract", () => {
     expect(typedShortcutEvents).toEqual([
       { type: "copy_phrase", phraseId: "plain" },
+      { type: "copy_phrase_failed", phraseId: "plain" },
       { type: "show_overlay", openTemplatePhraseId: "template" },
       { type: "show_overlay", openTemplatePhraseId: null },
     ]);

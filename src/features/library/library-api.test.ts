@@ -10,6 +10,11 @@ describe("library command API", () => {
       "set_overlay_display_mode",
       { gameId: "g", displayMode: "full" },
     ],
+    [
+      "setGroupCollapsed",
+      "set_group_collapsed",
+      { groupId: "r", collapsed: true },
+    ],
     ["deleteGame", "delete_game", { gameId: "g" }],
     [
       "createGroup",
