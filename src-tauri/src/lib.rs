@@ -6,6 +6,7 @@ pub mod services;
 
 use tauri::Manager;
 
+use commands::clipboard::ClipboardServiceState;
 use commands::library::LibraryServiceState;
 use db::Repository;
 use paths::resolve_data_paths;
@@ -19,12 +20,20 @@ pub fn run() {
             let portable = executable
                 .parent()
                 .is_some_and(|directory| directory.join("partypaste.portable").exists());
-            let repository =
-                Repository::open(resolve_data_paths(&executable, &app_data, portable))?;
+            let paths = resolve_data_paths(&executable, &app_data, portable);
+            let repository = Repository::open(paths.clone())?;
+            let clipboard_repository = Repository::open(paths)?;
             app.manage(LibraryServiceState::new(repository));
+            app.manage(ClipboardServiceState::new(
+                clipboard_repository,
+                app.handle().clone(),
+            ));
             Ok(())
         })
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
+            commands::clipboard::copy_phrase,
+            commands::clipboard::get_recent_copies,
             commands::library::get_library,
             commands::library::create_game,
             commands::library::update_game,
