@@ -363,6 +363,9 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
     }
     let deleted_game = service.delete_game("b").unwrap();
     create_game(&mut service, "c", "c");
+    service
+        .reorder_games(&["a".into(), "c".into(), "z".into()])
+        .unwrap();
     let snapshot = service
         .undo_operation(&deleted_game.undo.operation_id)
         .unwrap();
@@ -372,7 +375,7 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
             .iter()
             .map(|game| (game.id.as_str(), game.sort_order))
             .collect::<Vec<_>>(),
-        vec![("a", 0), ("b", 1), ("z", 2), ("c", 3)]
+        vec![("a", 0), ("c", 1), ("b", 2), ("z", 3)]
     );
 
     for id in ["ga", "gb", "gz"] {
@@ -381,6 +384,9 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
     create_phrase(&mut service, "restored-child", "gb", "child", "body", None);
     let deleted_group = service.delete_group("gb").unwrap();
     create_group(&mut service, "gc", "a", "gc");
+    service
+        .reorder_groups("a", &["ga".into(), "gc".into(), "gz".into()])
+        .unwrap();
     let snapshot = service
         .undo_operation(&deleted_group.undo.operation_id)
         .unwrap();
@@ -391,7 +397,7 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
             .filter(|group| group.game_id == "a")
             .map(|group| (group.id.as_str(), group.sort_order))
             .collect::<Vec<_>>(),
-        vec![("ga", 0), ("gb", 1), ("gz", 2), ("gc", 3)]
+        vec![("ga", 0), ("gc", 1), ("gb", 2), ("gz", 3)]
     );
     assert!(
         snapshot
@@ -404,7 +410,7 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
         create_phrase(&mut service, id, "ga", id, "body", None);
     }
     let deleted_phrase = service.delete_phrase("pb").unwrap();
-    create_phrase(&mut service, "pc", "ga", "pc", "body", None);
+    service.duplicate_phrase("pa", "pc").unwrap();
     let snapshot = service
         .undo_operation(&deleted_phrase.undo.operation_id)
         .unwrap();
@@ -415,7 +421,7 @@ fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
             .filter(|phrase| phrase.group_id == "ga")
             .map(|phrase| (phrase.id.as_str(), phrase.sort_order))
             .collect::<Vec<_>>(),
-        vec![("pa", 0), ("pb", 1), ("pz", 2), ("pc", 3)]
+        vec![("pa", 0), ("pc", 1), ("pb", 2), ("pz", 3)]
     );
 }
 
@@ -433,22 +439,106 @@ fn undo_deleted_favorite_preserves_a_later_favorite_and_contiguous_order() {
     }
     let deleted = service.delete_phrase("b").unwrap();
     service.set_favorite("c", true).unwrap();
+    service
+        .reorder_favorites("game", &["a".into(), "c".into(), "z".into()])
+        .unwrap();
 
     let snapshot = service.undo_operation(&deleted.undo.operation_id).unwrap();
+    let mut favorites = snapshot
+        .phrases
+        .iter()
+        .filter(|phrase| phrase.favorite)
+        .map(|phrase| (phrase.id.as_str(), phrase.favorite_order))
+        .collect::<Vec<_>>();
+    favorites.sort_by_key(|(_, order)| *order);
     assert_eq!(
-        snapshot
-            .phrases
-            .iter()
-            .filter(|phrase| phrase.favorite)
-            .map(|phrase| (phrase.id.as_str(), phrase.favorite_order))
-            .collect::<Vec<_>>(),
+        favorites,
         vec![
             ("a", Some(0)),
-            ("b", Some(1)),
-            ("z", Some(2)),
-            ("c", Some(3))
+            ("c", Some(1)),
+            ("b", Some(2)),
+            ("z", Some(3))
         ]
     );
+}
+
+#[test]
+fn undo_favorite_membership_restores_nullable_order_consistently() {
+    let now = Arc::new(AtomicU64::new(8_775));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    create_phrase(&mut service, "phrase", "group", "Phrase", "body", None);
+
+    let favorited = service.set_favorite("phrase", true).unwrap();
+    let snapshot = service
+        .undo_operation(&favorited.undo.operation_id)
+        .unwrap();
+    let phrase = &snapshot.phrases[0];
+    assert!(!phrase.favorite);
+    assert_eq!(phrase.favorite_order, None);
+
+    let favorited_again = service.set_favorite("phrase", true).unwrap();
+    let unfavorited = service.set_favorite("phrase", false).unwrap();
+    let snapshot = service
+        .undo_operation(&unfavorited.undo.operation_id)
+        .unwrap();
+    let phrase = &snapshot.phrases[0];
+    assert!(phrase.favorite);
+    assert_eq!(phrase.favorite_order, Some(0));
+    service
+        .undo_operation(&favorited_again.undo.operation_id)
+        .unwrap();
+}
+
+#[test]
+fn undo_variable_delete_reports_normalized_name_collision_and_retains_receipt() {
+    let now = Arc::new(AtomicU64::new(8_800));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "deleted".into(),
+            game_id: "game".into(),
+            name: "Ｓｔｒａße".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![],
+        })
+        .unwrap();
+    let deleted = service.delete_variable_definition("deleted").unwrap();
+    let colliding = service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "collision".into(),
+            game_id: "game".into(),
+            name: "STRASSE".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![],
+        })
+        .unwrap();
+    let collision_operation = colliding.undo_receipt().unwrap().operation_id.clone();
+
+    for _ in 0..2 {
+        assert!(matches!(
+            service.undo_operation(&deleted.undo.operation_id),
+            Err(LibraryServiceError::UndoConflict)
+        ));
+        assert_eq!(
+            service
+                .get_library()
+                .unwrap()
+                .variable_definitions
+                .iter()
+                .map(|definition| definition.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["collision"]
+        );
+    }
+
+    service.undo_operation(&collision_operation).unwrap();
+    let restored = service.undo_operation(&deleted.undo.operation_id).unwrap();
+    assert_eq!(restored.variable_definitions[0].id, "deleted");
 }
 
 #[test]

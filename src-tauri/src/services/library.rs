@@ -1041,8 +1041,9 @@ fn reverse_change(
         &after.settings,
         |record| record.key.clone(),
     )?;
-    restore_snapshot_orders(&mut current, &before, &after, &current_orders);
+    restore_snapshot_orders(&mut current, &before, &after, &current_orders)?;
     validate_snapshot_relationships(&current)?;
+    validate_snapshot_uniques(&current)?;
     Ok(current)
 }
 
@@ -1084,6 +1085,126 @@ fn validate_snapshot_relationships(snapshot: &LibrarySnapshot) -> Result<(), Lib
     } else {
         Err(LibraryServiceError::UndoConflict)
     }
+}
+
+fn validate_snapshot_uniques(snapshot: &LibrarySnapshot) -> Result<(), LibraryServiceError> {
+    let mut game_ids = HashSet::new();
+    let mut group_ids = HashSet::new();
+    let mut phrase_ids = HashSet::new();
+    let mut definition_ids = HashSet::new();
+    let mut preset_ids = HashSet::new();
+    let record_ids_are_unique = snapshot
+        .games
+        .iter()
+        .all(|record| game_ids.insert(record.id.as_str()))
+        && snapshot
+            .groups
+            .iter()
+            .all(|record| group_ids.insert(record.id.as_str()))
+        && snapshot
+            .phrases
+            .iter()
+            .all(|record| phrase_ids.insert(record.id.as_str()))
+        && snapshot
+            .variable_definitions
+            .iter()
+            .all(|record| definition_ids.insert(record.id.as_str()))
+        && snapshot
+            .variable_presets
+            .iter()
+            .all(|record| preset_ids.insert(record.id.as_str()));
+    let mut definition_names = HashSet::new();
+    let definition_names_are_unique = snapshot.variable_definitions.iter().all(|record| {
+        definition_names.insert((record.game_id.as_str(), record.normalized_name.as_str()))
+    });
+    let mut references = HashSet::new();
+    let references_are_unique = snapshot
+        .phrase_variable_refs
+        .iter()
+        .all(|record| references.insert((record.phrase_id.as_str(), record.token_order)));
+    let mut settings = HashSet::new();
+    let settings_are_unique = snapshot
+        .settings
+        .iter()
+        .all(|record| settings.insert(record.key.as_str()));
+
+    if record_ids_are_unique
+        && definition_names_are_unique
+        && references_are_unique
+        && settings_are_unique
+        && snapshot_orders_are_contiguous(snapshot)
+    {
+        Ok(())
+    } else {
+        Err(LibraryServiceError::UndoConflict)
+    }
+}
+
+fn snapshot_orders_are_contiguous(snapshot: &LibrarySnapshot) -> bool {
+    let contiguous = |mut orders: Vec<i64>| {
+        orders.sort_unstable();
+        orders
+            .into_iter()
+            .enumerate()
+            .all(|(index, order)| order == index as i64)
+    };
+    contiguous(
+        snapshot
+            .games
+            .iter()
+            .map(|record| record.sort_order)
+            .collect(),
+    ) && snapshot.games.iter().all(|game| {
+        contiguous(
+            snapshot
+                .groups
+                .iter()
+                .filter(|record| record.game_id == game.id)
+                .map(|record| record.sort_order)
+                .collect(),
+        ) && contiguous(
+            snapshot
+                .variable_definitions
+                .iter()
+                .filter(|record| record.game_id == game.id)
+                .map(|record| record.sort_order)
+                .collect(),
+        ) && contiguous(
+            snapshot
+                .phrases
+                .iter()
+                .filter(|record| {
+                    record.favorite
+                        && snapshot
+                            .groups
+                            .iter()
+                            .any(|group| group.id == record.group_id && group.game_id == game.id)
+                })
+                .filter_map(|record| record.favorite_order)
+                .collect(),
+        )
+    }) && snapshot.groups.iter().all(|group| {
+        contiguous(
+            snapshot
+                .phrases
+                .iter()
+                .filter(|record| record.group_id == group.id)
+                .map(|record| record.sort_order)
+                .collect(),
+        )
+    }) && snapshot.variable_definitions.iter().all(|definition| {
+        contiguous(
+            snapshot
+                .variable_presets
+                .iter()
+                .filter(|record| record.variable_definition_id == definition.id)
+                .map(|record| record.sort_order)
+                .collect(),
+        )
+    }) && snapshot
+        .phrases
+        .iter()
+        .all(|record| record.favorite == record.favorite_order.is_some())
 }
 
 fn reverse_records<T: Clone + Eq + Serialize + DeserializeOwned>(
@@ -1159,6 +1280,9 @@ fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
         return Err(LibraryServiceError::UndoConflict);
     };
     for (field, before_value) in before {
+        if field == "sortOrder" || field == "favoriteOrder" {
+            continue;
+        }
         let after_value = after.get(field).ok_or(LibraryServiceError::UndoConflict)?;
         if before_value != after_value {
             if current.get(field) != Some(after_value) {
@@ -1284,7 +1408,7 @@ fn reverse_order(
     fallback: Vec<String>,
     before: &[String],
     after: &[String],
-) -> Vec<String> {
+) -> Result<Vec<String>, LibraryServiceError> {
     let valid = fallback.iter().map(String::as_str).collect::<HashSet<_>>();
     let after_ids = after.iter().map(String::as_str).collect::<HashSet<_>>();
     let restored = before
@@ -1292,15 +1416,47 @@ fn reverse_order(
         .filter(|id| !after_ids.contains(id.as_str()) && valid.contains(id.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    if restored.is_empty() {
-        return fallback;
-    }
-
     let mut result = current
         .iter()
         .filter(|id| valid.contains(id.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+
+    if restored.is_empty() {
+        let common = before
+            .iter()
+            .filter(|id| after_ids.contains(id.as_str()) && valid.contains(id.as_str()))
+            .cloned()
+            .collect::<HashSet<_>>();
+        let before_common = before
+            .iter()
+            .filter(|id| common.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let after_common = after
+            .iter()
+            .filter(|id| common.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if before_common != after_common {
+            let current_common = result
+                .iter()
+                .filter(|id| common.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            if current_common != after_common {
+                return Err(LibraryServiceError::UndoConflict);
+            }
+            let mut desired = before_common.into_iter();
+            for id in &mut result {
+                if common.contains(id) {
+                    *id = desired.next().ok_or(LibraryServiceError::UndoConflict)?;
+                }
+            }
+        }
+        return Ok(result);
+    }
+
     for restored_id in restored {
         let before_index = before.iter().position(|id| id == &restored_id).unwrap_or(0);
         let successor = before[before_index + 1..]
@@ -1319,7 +1475,7 @@ fn reverse_order(
             restored_id,
         );
     }
-    result
+    Ok(result)
 }
 
 fn restore_snapshot_orders(
@@ -1327,7 +1483,7 @@ fn restore_snapshot_orders(
     before: &LibrarySnapshot,
     after: &LibrarySnapshot,
     current: &SnapshotOrders,
-) {
+) -> Result<(), LibraryServiceError> {
     let before_orders = SnapshotOrders::from_snapshot(before);
     let after_orders = SnapshotOrders::from_snapshot(after);
     let fallback = ordered_ids(
@@ -1340,12 +1496,20 @@ fn restore_snapshot_orders(
         fallback,
         &before_orders.games,
         &after_orders.games,
-    );
+    )?;
     for record in &mut snapshot.games {
         record.sort_order = order
             .iter()
             .position(|id| id == &record.id)
             .unwrap_or(order.len()) as i64;
+    }
+
+    for record in snapshot
+        .phrases
+        .iter_mut()
+        .filter(|record| !record.favorite)
+    {
+        record.favorite_order = None;
     }
 
     let game_ids = snapshot
@@ -1371,7 +1535,7 @@ fn restore_snapshot_orders(
                 .get(&game_id)
                 .map_or(&[], Vec::as_slice),
             after_orders.groups.get(&game_id).map_or(&[], Vec::as_slice),
-        );
+        )?;
         for record in snapshot
             .groups
             .iter_mut()
@@ -1409,7 +1573,7 @@ fn restore_snapshot_orders(
                 .favorites
                 .get(&game_id)
                 .map_or(&[], Vec::as_slice),
-        );
+        )?;
         for record in snapshot
             .phrases
             .iter_mut()
@@ -1441,7 +1605,7 @@ fn restore_snapshot_orders(
                 .definitions
                 .get(&game_id)
                 .map_or(&[], Vec::as_slice),
-        );
+        )?;
         for record in snapshot
             .variable_definitions
             .iter_mut()
@@ -1480,7 +1644,7 @@ fn restore_snapshot_orders(
                 .phrases
                 .get(&group_id)
                 .map_or(&[], Vec::as_slice),
-        );
+        )?;
         for record in snapshot
             .phrases
             .iter_mut()
@@ -1522,7 +1686,7 @@ fn restore_snapshot_orders(
                 .presets
                 .get(&definition_id)
                 .map_or(&[], Vec::as_slice),
-        );
+        )?;
         for record in snapshot
             .variable_presets
             .iter_mut()
@@ -1534,6 +1698,7 @@ fn restore_snapshot_orders(
                 .unwrap_or(order.len()) as i64;
         }
     }
+    Ok(())
 }
 
 #[derive(Debug, Error)]
