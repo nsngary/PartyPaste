@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PartyPaste",
+  "version": "0.1.0",
+  "identifier": "com.partypaste.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "manager",
+        "title": "PartyPaste Manager",
+        "url": "/",
+        "width": 1120,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 560
+      },
+      {
+        "label": "overlay",
+        "title": "PartyPaste Overlay",
+        "url": "/overlay.html",
+        "width": 300,
+        "height": 420,
+        "minWidth": 240,
+        "minHeight": 160
+      }
+    ]
+  }
+}
