@@ -12,9 +12,9 @@ use crate::services::library::{
     VariableDefinitionWithPresets, VariableService, VariableServiceError,
 };
 
-pub struct RepositoryState(Mutex<LibraryService>);
+pub struct LibraryServiceState(Mutex<LibraryService>);
 
-impl RepositoryState {
+impl LibraryServiceState {
     pub fn new(repository: Repository) -> Self {
         Self(Mutex::new(LibraryService::new(repository)))
     }
@@ -27,18 +27,14 @@ impl RepositoryState {
 }
 
 #[tauri::command]
-pub fn get_library(
-    state: State<'_, RepositoryState>,
-    game_id: Option<String>,
-) -> Result<LibrarySnapshot, AppError> {
+pub fn get_library(state: State<'_, LibraryServiceState>) -> Result<LibrarySnapshot, AppError> {
     let service = state.lock()?;
-    let _ = game_id;
     service.get_library().map_err(library_error)
 }
 
 #[tauri::command]
 pub fn create_game(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: CreateGameInput,
 ) -> Result<MutationResult<GameRecord>, AppError> {
     state.lock()?.create_game(input).map_err(library_error)
@@ -46,7 +42,7 @@ pub fn create_game(
 
 #[tauri::command]
 pub fn update_game(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: UpdateGameInput,
 ) -> Result<MutationResult<GameRecord>, AppError> {
     state.lock()?.update_game(input).map_err(library_error)
@@ -54,7 +50,7 @@ pub fn update_game(
 
 #[tauri::command]
 pub fn delete_game(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
 ) -> Result<MutationResult<GameDeleteImpact>, AppError> {
     state.lock()?.delete_game(&game_id).map_err(library_error)
@@ -62,7 +58,7 @@ pub fn delete_game(
 
 #[tauri::command]
 pub fn create_group(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: CreateGroupInput,
 ) -> Result<MutationResult<GroupRecord>, AppError> {
     state.lock()?.create_group(input).map_err(library_error)
@@ -70,7 +66,7 @@ pub fn create_group(
 
 #[tauri::command]
 pub fn update_group(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: UpdateGroupInput,
 ) -> Result<MutationResult<GroupRecord>, AppError> {
     state.lock()?.update_group(input).map_err(library_error)
@@ -78,7 +74,7 @@ pub fn update_group(
 
 #[tauri::command]
 pub fn delete_group(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     group_id: String,
 ) -> Result<MutationResult<GroupDeleteImpact>, AppError> {
     state.lock()?.delete_group(&group_id).map_err(library_error)
@@ -86,7 +82,7 @@ pub fn delete_group(
 
 #[tauri::command]
 pub fn create_phrase(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: CreatePhraseInput,
 ) -> Result<MutationResult<PhraseRecord>, AppError> {
     state.lock()?.create_phrase(input).map_err(library_error)
@@ -94,7 +90,7 @@ pub fn create_phrase(
 
 #[tauri::command]
 pub fn update_phrase(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: UpdatePhraseInput,
 ) -> Result<MutationResult<PhraseRecord>, AppError> {
     state.lock()?.update_phrase(input).map_err(library_error)
@@ -102,7 +98,7 @@ pub fn update_phrase(
 
 #[tauri::command]
 pub fn delete_phrase(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     phrase_id: String,
 ) -> Result<MutationResult<PhraseRecord>, AppError> {
     state
@@ -113,7 +109,7 @@ pub fn delete_phrase(
 
 #[tauri::command]
 pub fn duplicate_phrase(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     phrase_id: String,
     new_phrase_id: String,
 ) -> Result<MutationResult<PhraseRecord>, AppError> {
@@ -125,7 +121,7 @@ pub fn duplicate_phrase(
 
 #[tauri::command]
 pub fn move_phrase(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     phrase_id: String,
     target_group_id: String,
     target_index: usize,
@@ -138,7 +134,7 @@ pub fn move_phrase(
 
 #[tauri::command]
 pub fn reorder_games(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     ordered_ids: Vec<String>,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state
@@ -149,7 +145,7 @@ pub fn reorder_games(
 
 #[tauri::command]
 pub fn reorder_groups(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
     ordered_ids: Vec<String>,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
@@ -161,7 +157,7 @@ pub fn reorder_groups(
 
 #[tauri::command]
 pub fn reorder_phrases(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     group_id: String,
     ordered_ids: Vec<String>,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
@@ -173,7 +169,7 @@ pub fn reorder_phrases(
 
 #[tauri::command]
 pub fn reorder_favorites(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
     ordered_ids: Vec<String>,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
@@ -185,7 +181,7 @@ pub fn reorder_favorites(
 
 #[tauri::command]
 pub fn reorder_variable_definitions(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
     ordered_ids: Vec<String>,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
@@ -197,7 +193,7 @@ pub fn reorder_variable_definitions(
 
 #[tauri::command]
 pub fn set_favorite(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     phrase_id: String,
     favorite: bool,
 ) -> Result<MutationResult<PhraseRecord>, AppError> {
@@ -209,7 +205,7 @@ pub fn set_favorite(
 
 #[tauri::command]
 pub fn search_phrases(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
     query: String,
 ) -> Result<Vec<PhraseRecord>, AppError> {
@@ -221,7 +217,7 @@ pub fn search_phrases(
 
 #[tauri::command]
 pub fn undo_operation(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     operation_id: String,
 ) -> Result<LibrarySnapshot, AppError> {
     state
@@ -232,7 +228,7 @@ pub fn undo_operation(
 
 #[tauri::command]
 pub fn get_game_delete_impact(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
 ) -> Result<GameDeleteImpact, AppError> {
     state
@@ -243,7 +239,7 @@ pub fn get_game_delete_impact(
 
 #[tauri::command]
 pub fn get_group_delete_impact(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     group_id: String,
 ) -> Result<GroupDeleteImpact, AppError> {
     state
@@ -254,7 +250,7 @@ pub fn get_group_delete_impact(
 
 #[tauri::command]
 pub fn list_variable_definitions(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     game_id: String,
 ) -> Result<Vec<VariableDefinitionWithPresets>, AppError> {
     let service = state.lock()?;
@@ -263,7 +259,7 @@ pub fn list_variable_definitions(
 
 #[tauri::command]
 pub fn save_variable_definition(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     input: SaveVariableDefinition,
 ) -> Result<SaveVariableResult, AppError> {
     let mut service = state.lock()?;
@@ -272,7 +268,7 @@ pub fn save_variable_definition(
 
 #[tauri::command]
 pub fn reorder_variable_presets(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     variable_definition_id: String,
     ordered_ids: Vec<String>,
 ) -> Result<(), AppError> {
@@ -287,7 +283,7 @@ pub fn reorder_variable_presets(
 
 #[tauri::command]
 pub fn delete_variable_definition(
-    state: State<'_, RepositoryState>,
+    state: State<'_, LibraryServiceState>,
     variable_definition_id: String,
 ) -> Result<DeleteImpact, AppError> {
     let mut service = state.lock()?;

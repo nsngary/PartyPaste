@@ -6,7 +6,7 @@ pub mod services;
 
 use tauri::Manager;
 
-use commands::library::RepositoryState;
+use commands::library::LibraryServiceState;
 use db::Repository;
 use paths::resolve_data_paths;
 
@@ -21,7 +21,7 @@ pub fn run() {
                 .is_some_and(|directory| directory.join("partypaste.portable").exists());
             let repository =
                 Repository::open(resolve_data_paths(&executable, &app_data, portable))?;
-            app.manage(RepositoryState::new(repository));
+            app.manage(LibraryServiceState::new(repository));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use partypaste_lib::db::Repository;
 use partypaste_lib::services::library::{
     CreateGameInput, CreateGroupInput, CreatePhraseInput, LibraryService, LibraryServiceError,
-    SaveVariableDefinition, UpdateGameInput, UpdateGroupInput, UpdatePhraseInput, VariableService,
+    SaveVariableDefinition, SaveVariablePreset, UpdateGameInput, UpdateGroupInput,
+    UpdatePhraseInput, VariableService,
 };
 
 fn service_at(now: Arc<AtomicU64>) -> LibraryService {
@@ -233,11 +234,40 @@ fn destructive_impacts_count_children_and_delete_can_be_undone_for_ten_seconds()
     create_phrase(&mut service, "p1", "a", "P1", "Body", None);
     create_phrase(&mut service, "p2", "a", "P2", "Body", None);
     create_phrase(&mut service, "p3", "b", "P3", "Body", None);
+    VariableService::save_definition(
+        service.repository_mut(),
+        SaveVariableDefinition {
+            id: "variable".into(),
+            game_id: "game".into(),
+            name: "Count".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![SaveVariablePreset {
+                id: "preset".into(),
+                value: "3".into(),
+                sort_order: 0,
+            }],
+        },
+    )
+    .unwrap();
+    service
+        .update_phrase(UpdatePhraseInput {
+            id: "p1".into(),
+            title: "P1".into(),
+            body_template: "Need {Count}".into(),
+            hotkey: None,
+        })
+        .unwrap();
 
-    assert_eq!(service.group_delete_impact("a").unwrap().phrase_count, 2);
+    let group_impact = service.group_delete_impact("a").unwrap();
+    assert_eq!(group_impact.phrase_count, 2);
+    assert_eq!(group_impact.phrase_variable_ref_count, 1);
     let game_impact = service.game_delete_impact("game").unwrap();
     assert_eq!(game_impact.group_count, 2);
     assert_eq!(game_impact.phrase_count, 3);
+    assert_eq!(game_impact.variable_definition_count, 1);
+    assert_eq!(game_impact.variable_preset_count, 1);
+    assert_eq!(game_impact.phrase_variable_ref_count, 1);
 
     let deleted = service.delete_group("a").unwrap();
     assert_eq!(deleted.value.phrase_count, 2);
@@ -260,6 +290,27 @@ fn destructive_impacts_count_children_and_delete_can_be_undone_for_ten_seconds()
             .iter()
             .all(|group| group.id != "a")
     );
+}
+
+#[test]
+fn every_unexpired_bounded_journal_receipt_can_be_selected_by_operation_id() {
+    let now = Arc::new(AtomicU64::new(7_000));
+    let mut service = service_at(now);
+    let first = service
+        .create_game(CreateGameInput {
+            id: "a".into(),
+            name: "A".into(),
+        })
+        .unwrap();
+    service
+        .create_game(CreateGameInput {
+            id: "b".into(),
+            name: "B".into(),
+        })
+        .unwrap();
+
+    service.undo_operation(&first.undo.operation_id).unwrap();
+    assert!(service.get_library().unwrap().games.is_empty());
 }
 
 #[test]

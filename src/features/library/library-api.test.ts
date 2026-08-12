@@ -3,7 +3,6 @@ import { createLibraryApi } from "./library-api";
 
 describe("library command API", () => {
   it.each([
-    ["getLibrary", "get_library", { gameId: "game" }],
     ["createGame", "create_game", { input: { id: "g", name: "Game" } }],
     ["updateGame", "update_game", { input: { id: "g", name: "Renamed" } }],
     ["deleteGame", "delete_game", { gameId: "g" }],
@@ -74,4 +73,11 @@ describe("library command API", () => {
       expect(invoke).toHaveBeenCalledWith(command, input);
     },
   );
+
+  it("loads the complete snapshot without a fake scope argument", async () => {
+    const invoke = vi.fn().mockResolvedValue({ games: [] });
+    const api = createLibraryApi(invoke);
+    await api.getLibrary();
+    expect(invoke).toHaveBeenCalledWith("get_library", {});
+  });
 });

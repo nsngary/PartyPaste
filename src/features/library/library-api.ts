@@ -71,10 +71,13 @@ export interface GameDeleteImpact {
   groupCount: number;
   phraseCount: number;
   variableDefinitionCount: number;
+  variablePresetCount: number;
+  phraseVariableRefCount: number;
 }
 
 export interface GroupDeleteImpact {
   phraseCount: number;
+  phraseVariableRefCount: number;
 }
 
 export interface CreateGameInput extends CommandInput {
@@ -117,8 +120,8 @@ export function createLibraryApi(
 ) {
   const call: CommandCaller = (name, input) => invoke(name, input);
   return {
-    getLibrary: (input: { gameId?: string }) =>
-      call<typeof input, LibrarySnapshot>("get_library", input),
+    getLibrary: () =>
+      call<Record<string, never>, LibrarySnapshot>("get_library", {}),
     createGame: (input: CreateGameInput) =>
       call<CreateGameInput, MutationResult<GameDto>>("create_game", input),
     updateGame: (input: UpdateGameInput) =>

@@ -177,6 +177,7 @@ pub struct MutationResult<T> {
 #[serde(rename_all = "camelCase")]
 pub struct GroupDeleteImpact {
     pub phrase_count: usize,
+    pub phrase_variable_ref_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -185,6 +186,8 @@ pub struct GameDeleteImpact {
     pub group_count: usize,
     pub phrase_count: usize,
     pub variable_definition_count: usize,
+    pub variable_preset_count: usize,
+    pub phrase_variable_ref_count: usize,
 }
 
 enum InverseOperation {
@@ -233,16 +236,14 @@ impl UndoJournal {
         operation_id: &str,
         now: u64,
     ) -> Result<InverseOperation, LibraryServiceError> {
-        let Some(entry) = self.entries.back() else {
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.operation_id == operation_id)
+        else {
             return Err(LibraryServiceError::UndoNotFound);
         };
-        if entry.operation_id != operation_id {
-            return Err(LibraryServiceError::UndoNotFound);
-        }
-        let entry = self
-            .entries
-            .pop_back()
-            .expect("latest journal entry exists");
+        let entry = self.entries.remove(index).expect("journal index exists");
         if now >= entry.expires_at {
             return Err(LibraryServiceError::UndoExpired);
         }
@@ -487,6 +488,26 @@ impl LibraryService {
                 .iter()
                 .filter(|definition| definition.game_id == game_id)
                 .count(),
+            variable_preset_count: snapshot
+                .variable_presets
+                .iter()
+                .filter(|preset| {
+                    snapshot.variable_definitions.iter().any(|definition| {
+                        definition.id == preset.variable_definition_id
+                            && definition.game_id == game_id
+                    })
+                })
+                .count(),
+            phrase_variable_ref_count: snapshot
+                .phrase_variable_refs
+                .iter()
+                .filter(|reference| {
+                    snapshot.phrases.iter().any(|phrase| {
+                        phrase.id == reference.phrase_id
+                            && group_ids.contains(&phrase.group_id.as_str())
+                    })
+                })
+                .count(),
         })
     }
 
@@ -498,11 +519,18 @@ impl LibraryService {
         if !snapshot.groups.iter().any(|group| group.id == group_id) {
             return Err(LibraryServiceError::NotFound);
         }
+        let phrase_ids = snapshot
+            .phrases
+            .iter()
+            .filter(|phrase| phrase.group_id == group_id)
+            .map(|phrase| phrase.id.as_str())
+            .collect::<Vec<_>>();
         Ok(GroupDeleteImpact {
-            phrase_count: snapshot
-                .phrases
+            phrase_count: phrase_ids.len(),
+            phrase_variable_ref_count: snapshot
+                .phrase_variable_refs
                 .iter()
-                .filter(|phrase| phrase.group_id == group_id)
+                .filter(|reference| phrase_ids.contains(&reference.phrase_id.as_str()))
                 .count(),
         })
     }
