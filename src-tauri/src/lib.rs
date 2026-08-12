@@ -25,15 +25,20 @@ pub fn run() {
             let repository = Repository::open(paths.clone())?;
             let clipboard_repository = Repository::open(paths.clone())?;
             let shortcut_repository = Repository::open(paths)?;
-            app.manage(LibraryServiceState::new(repository));
+            let shortcut_state = ShortcutSettingsState::new(
+                shortcut_repository,
+                TauriShortcutPort::new(app.handle().clone()),
+            )?;
+            let shortcut_hook = shortcut_state.mutation_hook();
+            app.manage(LibraryServiceState::with_mutation_hook(
+                repository,
+                shortcut_hook,
+            ));
             app.manage(ClipboardServiceState::new(
                 clipboard_repository,
                 app.handle().clone(),
             ));
-            app.manage(ShortcutSettingsState::new(
-                shortcut_repository,
-                TauriShortcutPort::new(app.handle().clone()),
-            )?);
+            app.manage(shortcut_state);
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())

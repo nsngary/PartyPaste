@@ -8,7 +8,8 @@ use crate::db::models::SettingRecord;
 use crate::db::{Repository, RepositoryError};
 use crate::error::AppError;
 use crate::services::shortcuts::{
-    ShortcutAction, ShortcutError, ShortcutEvent, ShortcutPort, ShortcutRegistry, ShortcutsDto,
+    ShortcutAction, ShortcutError, ShortcutEvent, ShortcutMutationError, ShortcutPort,
+    ShortcutRegistryHandle, ShortcutsDto,
 };
 use crate::services::templates::{TemplateService, TemplateToken};
 
@@ -48,7 +49,7 @@ pub struct ShortcutSettingsState(Mutex<ShortcutSettingsService>);
 
 pub struct ShortcutSettingsService {
     repository: Repository,
-    registry: ShortcutRegistry,
+    registry: ShortcutRegistryHandle,
 }
 
 impl ShortcutSettingsService {
@@ -74,7 +75,7 @@ impl ShortcutSettingsState {
         repository: Repository,
         port: impl ShortcutPort + 'static,
     ) -> Result<Self, RepositoryError> {
-        let mut registry = ShortcutRegistry::new(port);
+        let registry = ShortcutRegistryHandle::new(port);
         registry.rebuild(&repository.snapshot()?);
         Ok(Self(Mutex::new(ShortcutSettingsService {
             repository,
@@ -96,9 +97,23 @@ impl ShortcutSettingsState {
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut service) = self.0.lock() {
+        if let Ok(service) = self.0.lock() {
             service.registry.shutdown();
         }
+    }
+
+    pub fn mutation_hook(&self) -> ShortcutRegistryHandle {
+        self.0
+            .lock()
+            .expect("shortcut settings mutex poisoned")
+            .registry
+            .clone()
+    }
+}
+
+impl Drop for ShortcutSettingsState {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -116,20 +131,18 @@ pub fn set_overlay_shortcut(
     shortcut: String,
 ) -> Result<ShortcutsDto, AppError> {
     let mut service = state.lock()?;
-    let accelerator = service
-        .registry
-        .replace(ShortcutAction::Overlay, &shortcut)
-        .map_err(shortcut_error)?;
-    service
-        .repository
-        .transaction(|tx| {
-            tx.upsert_setting(&SettingRecord {
-                key: OVERLAY_SHORTCUT_KEY.into(),
-                value: accelerator,
+    let registry = service.registry.clone();
+    registry
+        .replace_transactional(ShortcutAction::Overlay, &shortcut, false, |accelerator| {
+            service.repository.transaction(|tx| {
+                tx.upsert_setting(&SettingRecord {
+                    key: OVERLAY_SHORTCUT_KEY.into(),
+                    value: accelerator.to_owned(),
+                })
             })
         })
-        .map_err(repository_error)?;
-    Ok(service.registry.shortcuts())
+        .map_err(shortcut_mutation_error)?;
+    Ok(registry.shortcuts())
 }
 
 #[tauri::command]
@@ -150,26 +163,31 @@ pub fn set_phrase_shortcut(
             message_key: "errors.notFound",
         })?;
     let action = ShortcutAction::Phrase(phrase_id);
+    let registry = service.registry.clone();
     if let Some(shortcut) = shortcut {
-        let accelerator = service
-            .registry
-            .replace(action.clone(), &shortcut)
-            .map_err(shortcut_error)?;
         let template = TemplateService::scan(&phrase.body_template)
             .tokens
             .iter()
             .any(|token| matches!(token, TemplateToken::Variable { .. }));
-        service.registry.set_phrase_template(&phrase.id, template);
-        phrase.hotkey = Some(accelerator);
+        registry
+            .replace_transactional(action, &shortcut, template, |accelerator| {
+                phrase.hotkey = Some(accelerator.to_owned());
+                service
+                    .repository
+                    .transaction(|tx| tx.update_phrase(&phrase))
+            })
+            .map_err(shortcut_mutation_error)?;
     } else {
-        service.registry.remove(&action).map_err(shortcut_error)?;
-        phrase.hotkey = None;
+        registry
+            .remove_transactional(&action, || {
+                phrase.hotkey = None;
+                service
+                    .repository
+                    .transaction(|tx| tx.update_phrase(&phrase))
+            })
+            .map_err(shortcut_mutation_error)?;
     }
-    service
-        .repository
-        .transaction(|tx| tx.update_phrase(&phrase))
-        .map_err(repository_error)?;
-    Ok(service.registry.shortcuts())
+    Ok(registry.shortcuts())
 }
 
 pub fn route_shortcut(app: &AppHandle, accelerator: &str) {
@@ -206,6 +224,15 @@ fn shortcut_error(error: ShortcutError) -> AppError {
         ShortcutError::RegistrationRejected => AppError::ShortcutConflict {
             message_key: "errors.shortcutConflict",
         },
+    }
+}
+
+fn shortcut_mutation_error(error: ShortcutMutationError<RepositoryError>) -> AppError {
+    match error {
+        ShortcutMutationError::Shortcut(error) | ShortcutMutationError::Rollback(error) => {
+            shortcut_error(error)
+        }
+        ShortcutMutationError::Persistence(error) => repository_error(error),
     }
 }
 

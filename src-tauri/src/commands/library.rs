@@ -7,9 +7,9 @@ use crate::db::models::{GameRecord, GroupRecord, LibrarySnapshot, PhraseRecord};
 use crate::error::AppError;
 use crate::services::library::{
     CreateGameInput, CreateGroupInput, CreatePhraseInput, GameDeleteImpact, GroupDeleteImpact,
-    LibraryService, LibraryServiceError, MutationResult, SaveVariableCommandResult,
-    SaveVariableDefinition, UpdateGameInput, UpdateGroupInput, UpdatePhraseInput,
-    VariableDefinitionWithPresets, VariableServiceError,
+    LibraryMutationHook, LibraryService, LibraryServiceError, MutationResult,
+    SaveVariableCommandResult, SaveVariableDefinition, UpdateGameInput, UpdateGroupInput,
+    UpdatePhraseInput, VariableDefinitionWithPresets, VariableServiceError,
 };
 
 pub struct LibraryServiceState(Mutex<LibraryService>);
@@ -17,6 +17,16 @@ pub struct LibraryServiceState(Mutex<LibraryService>);
 impl LibraryServiceState {
     pub fn new(repository: Repository) -> Self {
         Self(Mutex::new(LibraryService::new(repository)))
+    }
+
+    pub fn with_mutation_hook(
+        repository: Repository,
+        mutation_hook: impl LibraryMutationHook + 'static,
+    ) -> Self {
+        Self(Mutex::new(LibraryService::with_mutation_hook(
+            repository,
+            mutation_hook,
+        )))
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, LibraryService>, AppError> {

@@ -287,6 +287,17 @@ pub struct LibraryService {
     repository: Repository,
     journal: UndoJournal,
     clock: Box<dyn Fn() -> u64 + Send + Sync>,
+    mutation_hook: Box<dyn LibraryMutationHook>,
+}
+
+pub trait LibraryMutationHook: Send {
+    fn library_changed(&mut self, snapshot: &LibrarySnapshot);
+}
+
+struct NoopLibraryMutationHook;
+
+impl LibraryMutationHook for NoopLibraryMutationHook {
+    fn library_changed(&mut self, _snapshot: &LibrarySnapshot) {}
 }
 
 impl LibraryService {
@@ -306,6 +317,23 @@ impl LibraryService {
             repository,
             journal: UndoJournal::new(),
             clock: Box::new(clock),
+            mutation_hook: Box::new(NoopLibraryMutationHook),
+        }
+    }
+
+    pub fn with_mutation_hook(
+        repository: Repository,
+        mutation_hook: impl LibraryMutationHook + 'static,
+    ) -> Self {
+        Self {
+            repository,
+            journal: UndoJournal::new(),
+            clock: Box::new(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_millis() as u64)
+            }),
+            mutation_hook: Box::new(mutation_hook),
         }
     }
 
@@ -353,6 +381,7 @@ impl LibraryService {
                     (self.clock)(),
                     preserve_later_phrase_bodies,
                 );
+                self.mutation_hook.library_changed(&after);
                 Ok(SaveVariableCommandResult::Saved { value: after, undo })
             }
             SaveVariableResult::RenameConfirmationRequired {
@@ -374,6 +403,7 @@ impl LibraryService {
         VariableService::reorder_presets(&mut self.repository, definition_id, ordered_ids)?;
         let after = self.repository.snapshot()?;
         let undo = self.journal.record(before, after.clone(), (self.clock)());
+        self.mutation_hook.library_changed(&after);
         Ok(MutationResult { value: after, undo })
     }
 
@@ -385,6 +415,7 @@ impl LibraryService {
         VariableService::delete_definition(&mut self.repository, definition_id)?;
         let after = self.repository.snapshot()?;
         let undo = self.journal.record(before, after.clone(), (self.clock)());
+        self.mutation_hook.library_changed(&after);
         Ok(MutationResult { value: after, undo })
     }
 
@@ -399,7 +430,8 @@ impl LibraryService {
         let before = self.repository.snapshot()?;
         let value = operation(&mut self.repository)?;
         let after = self.repository.snapshot()?;
-        let undo = self.journal.record(before, after, (self.clock)());
+        let undo = self.journal.record(before, after.clone(), (self.clock)());
+        self.mutation_hook.library_changed(&after);
         Ok(MutationResult { value, undo })
     }
 
@@ -1025,6 +1057,7 @@ impl LibraryService {
         self.repository.replace_snapshot(&restored)?;
         let restored = self.repository.snapshot()?;
         self.journal.consume(operation_id);
+        self.mutation_hook.library_changed(&restored);
         Ok(restored)
     }
 }

@@ -11,11 +11,33 @@ const modifierAliases: Record<string, string> = {
 
 const modifierOrder = ["Ctrl", "Alt", "Shift", "Meta"];
 const keyAliases: Record<string, string> = {
+  arrowdown: "ArrowDown",
+  arrowleft: "ArrowLeft",
+  arrowright: "ArrowRight",
+  arrowup: "ArrowUp",
+  backspace: "Backspace",
+  capslock: "CapsLock",
+  del: "Delete",
+  delete: "Delete",
+  down: "ArrowDown",
+  end: "End",
   enter: "Enter",
   esc: "Escape",
   escape: "Escape",
+  home: "Home",
+  ins: "Insert",
+  insert: "Insert",
+  left: "ArrowLeft",
+  numlock: "NumLock",
+  pagedown: "PageDown",
+  pageup: "PageUp",
+  printscreen: "PrintScreen",
+  return: "Enter",
+  right: "ArrowRight",
+  scrolllock: "ScrollLock",
   space: "Space",
   tab: "Tab",
+  up: "ArrowUp",
 };
 
 export type ShortcutValidationError = "modifier_required" | "duplicate";
@@ -34,9 +56,14 @@ export function normalizeShortcut(shortcut: string): string {
     if (modifier) {
       modifiers.add(modifier);
     } else {
+      const lower = part.toLowerCase();
       keys.push(
-        keyAliases[part.toLowerCase()] ??
-          (part.length === 1 ? part.toUpperCase() : part),
+        keyAliases[lower] ??
+          (/^f\d+$/.test(lower)
+            ? lower.toUpperCase()
+            : part.length === 1
+              ? part.toUpperCase()
+              : `${lower[0]?.toUpperCase() ?? ""}${lower.slice(1)}`),
       );
     }
   }

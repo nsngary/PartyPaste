@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::db::models::LibrarySnapshot;
+use crate::services::library::LibraryMutationHook;
 
 const DEFAULT_OVERLAY_SHORTCUT: &str = "Ctrl+Shift+Space";
 const OVERLAY_SHORTCUT_KEY: &str = "overlay_shortcut";
@@ -21,9 +23,11 @@ pub enum ShortcutAction {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ShortcutEvent {
     CopyPhrase {
+        #[serde(rename = "phraseId")]
         phrase_id: String,
     },
     ShowOverlay {
+        #[serde(rename = "openTemplatePhraseId")]
         open_template_phrase_id: Option<String>,
     },
 }
@@ -48,6 +52,13 @@ pub enum ShortcutError {
     Duplicate,
     #[error("shortcut registration was rejected")]
     RegistrationRejected,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum ShortcutMutationError<E> {
+    Shortcut(ShortcutError),
+    Persistence(E),
+    Rollback(ShortcutError),
 }
 
 pub trait ShortcutPort: Send {
@@ -107,10 +118,48 @@ impl ShortcutRegistry {
         Ok(accelerator)
     }
 
+    pub fn replace_transactional<E>(
+        &mut self,
+        action: ShortcutAction,
+        shortcut: &str,
+        template: bool,
+        persist: impl FnOnce(&str) -> Result<(), E>,
+    ) -> Result<String, ShortcutMutationError<E>> {
+        let previous = self.registered.get(&action).cloned();
+        let accelerator = self
+            .replace(action.clone(), shortcut)
+            .map_err(ShortcutMutationError::Shortcut)?;
+        if let ShortcutAction::Phrase(phrase_id) = &action {
+            self.set_phrase_template(phrase_id, template);
+        }
+        if let Err(error) = persist(&accelerator) {
+            self.restore(action, previous)
+                .map_err(ShortcutMutationError::Rollback)?;
+            return Err(ShortcutMutationError::Persistence(error));
+        }
+        Ok(accelerator)
+    }
+
     pub fn remove(&mut self, action: &ShortcutAction) -> Result<(), ShortcutError> {
         if let Some(previous) = self.registered.get(action).cloned() {
             self.port.unregister(&previous.accelerator)?;
             self.registered.remove(action);
+        }
+        Ok(())
+    }
+
+    pub fn remove_transactional<E>(
+        &mut self,
+        action: &ShortcutAction,
+        persist: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), ShortcutMutationError<E>> {
+        let previous = self.registered.get(action).cloned();
+        self.remove(action)
+            .map_err(ShortcutMutationError::Shortcut)?;
+        if let Err(error) = persist() {
+            self.restore(action.clone(), previous)
+                .map_err(ShortcutMutationError::Rollback)?;
+            return Err(ShortcutMutationError::Persistence(error));
         }
         Ok(())
     }
@@ -213,11 +262,104 @@ impl ShortcutRegistry {
             },
         );
     }
+
+    fn restore(
+        &mut self,
+        action: ShortcutAction,
+        previous: Option<RegisteredShortcut>,
+    ) -> Result<(), ShortcutError> {
+        let current = self.registered.get(&action).cloned();
+        if let Some(current) = &current {
+            self.port.unregister(&current.accelerator)?;
+        }
+        if let Some(previous) = &previous
+            && let Err(error) = self.port.register(&previous.accelerator)
+        {
+            if let Some(current) = current {
+                let _ = self.port.register(&current.accelerator);
+            }
+            return Err(error);
+        }
+        match previous {
+            Some(previous) => {
+                self.registered.insert(action, previous);
+            }
+            None => {
+                self.registered.remove(&action);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Drop for ShortcutRegistry {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[derive(Clone)]
+pub struct ShortcutRegistryHandle(Arc<Mutex<ShortcutRegistry>>);
+
+impl ShortcutRegistryHandle {
+    pub fn new(port: impl ShortcutPort + 'static) -> Self {
+        Self(Arc::new(Mutex::new(ShortcutRegistry::new(port))))
+    }
+
+    pub fn rebuild(&self, snapshot: &LibrarySnapshot) -> RebuildResult {
+        self.0.lock().map_or_else(
+            |_| RebuildResult::default(),
+            |mut registry| registry.rebuild(snapshot),
+        )
+    }
+
+    pub fn event_for(&self, shortcut: &str) -> Option<ShortcutEvent> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|registry| registry.event_for(shortcut))
+    }
+
+    pub fn shortcuts(&self) -> ShortcutsDto {
+        self.0
+            .lock()
+            .map_or_else(|_| ShortcutsDto::default(), |registry| registry.shortcuts())
+    }
+
+    pub fn replace_transactional<E>(
+        &self,
+        action: ShortcutAction,
+        shortcut: &str,
+        template: bool,
+        persist: impl FnOnce(&str) -> Result<(), E>,
+    ) -> Result<String, ShortcutMutationError<E>> {
+        self.0
+            .lock()
+            .expect("shortcut registry mutex poisoned")
+            .replace_transactional(action, shortcut, template, persist)
+    }
+
+    pub fn remove_transactional<E>(
+        &self,
+        action: &ShortcutAction,
+        persist: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), ShortcutMutationError<E>> {
+        self.0
+            .lock()
+            .expect("shortcut registry mutex poisoned")
+            .remove_transactional(action, persist)
+    }
+
+    pub fn shutdown(&self) {
+        if let Ok(mut registry) = self.0.lock() {
+            registry.shutdown();
+        }
+    }
+}
+
+impl LibraryMutationHook for ShortcutRegistryHandle {
+    fn library_changed(&mut self, snapshot: &LibrarySnapshot) {
+        self.rebuild(snapshot);
     }
 }
 
@@ -249,11 +391,42 @@ pub fn normalize_shortcut(shortcut: &str) -> String {
             "shift" => modifiers.push("Shift"),
             "meta" | "super" | "win" => modifiers.push("Meta"),
             "space" => keys.push("Space".into()),
-            "enter" => keys.push("Enter".into()),
+            "enter" | "return" => keys.push("Enter".into()),
             "esc" | "escape" => keys.push("Escape".into()),
             "tab" => keys.push("Tab".into()),
+            "pageup" => keys.push("PageUp".into()),
+            "pagedown" => keys.push("PageDown".into()),
+            "arrowup" | "up" => keys.push("ArrowUp".into()),
+            "arrowdown" | "down" => keys.push("ArrowDown".into()),
+            "arrowleft" | "left" => keys.push("ArrowLeft".into()),
+            "arrowright" | "right" => keys.push("ArrowRight".into()),
+            "backspace" => keys.push("Backspace".into()),
+            "capslock" => keys.push("CapsLock".into()),
+            "delete" | "del" => keys.push("Delete".into()),
+            "end" => keys.push("End".into()),
+            "home" => keys.push("Home".into()),
+            "insert" | "ins" => keys.push("Insert".into()),
+            "numlock" => keys.push("NumLock".into()),
+            "printscreen" => keys.push("PrintScreen".into()),
+            "scrolllock" => keys.push("ScrollLock".into()),
+            function
+                if function.strip_prefix('f').is_some_and(|digits| {
+                    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+                }) =>
+            {
+                keys.push(function.to_ascii_uppercase())
+            }
             _ if part.chars().count() == 1 => keys.push(part.to_uppercase()),
-            _ => keys.push(part.to_owned()),
+            _ => {
+                let mut characters = part.chars();
+                let canonical = characters.next().map_or_else(String::new, |first| {
+                    first
+                        .to_uppercase()
+                        .chain(characters.flat_map(char::to_lowercase))
+                        .collect()
+                });
+                keys.push(canonical);
+            }
         }
     }
     modifiers.sort_by_key(|modifier| {
