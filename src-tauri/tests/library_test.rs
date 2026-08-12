@@ -542,6 +542,108 @@ fn undo_variable_delete_reports_normalized_name_collision_and_retains_receipt() 
 }
 
 #[test]
+fn undo_variable_delete_rebuilds_refs_from_the_later_phrase_body() {
+    let now = Arc::new(AtomicU64::new(8_825));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "count".into(),
+            game_id: "game".into(),
+            name: "Count".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![],
+        })
+        .unwrap();
+    create_phrase(
+        &mut service,
+        "phrase",
+        "group",
+        "Phrase",
+        "Need {Count}",
+        None,
+    );
+    assert_eq!(service.get_library().unwrap().phrase_variable_refs.len(), 1);
+
+    let deleted = service.delete_variable_definition("count").unwrap();
+    service
+        .update_phrase(UpdatePhraseInput {
+            id: "phrase".into(),
+            title: "Phrase".into(),
+            body_template: "Keep {Unknown} as free text".into(),
+            hotkey: None,
+        })
+        .unwrap();
+    let restored = service.undo_operation(&deleted.undo.operation_id).unwrap();
+
+    assert_eq!(
+        restored.phrases[0].body_template,
+        "Keep {Unknown} as free text"
+    );
+    assert!(restored.phrase_variable_refs.is_empty());
+}
+
+#[test]
+fn undo_variable_rename_preserves_later_body_and_rebuilds_known_and_unknown_refs() {
+    let now = Arc::new(AtomicU64::new(8_850));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "count".into(),
+            game_id: "game".into(),
+            name: "Count".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![],
+        })
+        .unwrap();
+    create_phrase(
+        &mut service,
+        "phrase",
+        "group",
+        "Phrase",
+        "Need {Count}",
+        None,
+    );
+    let renamed = service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "count".into(),
+            game_id: "game".into(),
+            name: "Players".into(),
+            sort_order: 0,
+            rename_confirmed: true,
+            presets: vec![],
+        })
+        .unwrap();
+    let rename_operation = renamed.undo_receipt().unwrap().operation_id.clone();
+    service
+        .update_phrase(UpdatePhraseInput {
+            id: "phrase".into(),
+            title: "Phrase".into(),
+            body_template: "Again {Count}; keep {Unknown}".into(),
+            hotkey: None,
+        })
+        .unwrap();
+
+    let restored = service.undo_operation(&rename_operation).unwrap();
+    assert_eq!(restored.variable_definitions[0].name, "Count");
+    assert_eq!(
+        restored.phrases[0].body_template,
+        "Again {Count}; keep {Unknown}"
+    );
+    assert_eq!(restored.phrase_variable_refs.len(), 1);
+    assert_eq!(
+        restored.phrase_variable_refs[0].variable_definition_id,
+        "count"
+    );
+    assert_eq!(restored.phrase_variable_refs[0].token_order, 0);
+}
+
+#[test]
 fn phrase_mutations_return_the_reference_set_in_the_complete_snapshot() {
     let now = Arc::new(AtomicU64::new(8_900));
     let mut service = service_at(now);

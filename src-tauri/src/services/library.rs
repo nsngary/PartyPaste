@@ -1030,21 +1030,70 @@ fn reverse_change(
         |record| record.id.clone(),
     )?;
     reverse_records(
-        &mut current.phrase_variable_refs,
-        &before.phrase_variable_refs,
-        &after.phrase_variable_refs,
-        |record| format!("{}\0{}", record.phrase_id, record.token_order),
-    )?;
-    reverse_records(
         &mut current.settings,
         &before.settings,
         &after.settings,
         |record| record.key.clone(),
     )?;
     restore_snapshot_orders(&mut current, &before, &after, &current_orders)?;
+    rebuild_snapshot_phrase_references(&mut current)?;
     validate_snapshot_relationships(&current)?;
     validate_snapshot_uniques(&current)?;
     Ok(current)
+}
+
+fn rebuild_snapshot_phrase_references(
+    snapshot: &mut LibrarySnapshot,
+) -> Result<(), LibraryServiceError> {
+    let game_by_group = snapshot
+        .groups
+        .iter()
+        .map(|group| (group.id.as_str(), group.game_id.as_str()))
+        .collect::<HashMap<_, _>>();
+    let definitions_by_game = snapshot.variable_definitions.iter().fold(
+        HashMap::<&str, HashMap<&str, &str>>::new(),
+        |mut definitions, definition| {
+            definitions
+                .entry(definition.game_id.as_str())
+                .or_default()
+                .insert(definition.normalized_name.as_str(), definition.id.as_str());
+            definitions
+        },
+    );
+    let mut references = Vec::new();
+    for phrase in &snapshot.phrases {
+        let game_id = game_by_group
+            .get(phrase.group_id.as_str())
+            .ok_or(LibraryServiceError::UndoConflict)?;
+        let definitions = definitions_by_game
+            .get(game_id)
+            .cloned()
+            .unwrap_or_default();
+        let scan = TemplateService::scan(&phrase.body_template);
+        if !scan.issues.is_empty() {
+            return Err(LibraryServiceError::UndoConflict);
+        }
+        references.extend(
+            scan.tokens
+                .iter()
+                .filter_map(|token| match token {
+                    TemplateToken::Variable { name } => Some(name),
+                    TemplateToken::Text { .. } => None,
+                })
+                .enumerate()
+                .filter_map(|(token_order, name)| {
+                    definitions
+                        .get(normalize_search(name).as_str())
+                        .map(|variable_definition_id| PhraseVariableRefRecord {
+                            phrase_id: phrase.id.clone(),
+                            variable_definition_id: (*variable_definition_id).to_owned(),
+                            token_order: token_order as i64,
+                        })
+                }),
+        );
+    }
+    snapshot.phrase_variable_refs = references;
+    Ok(())
 }
 
 fn validate_snapshot_relationships(snapshot: &LibrarySnapshot) -> Result<(), LibraryServiceError> {
@@ -1286,6 +1335,9 @@ fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
         let after_value = after.get(field).ok_or(LibraryServiceError::UndoConflict)?;
         if before_value != after_value {
             if current.get(field) != Some(after_value) {
+                if field == "bodyTemplate" {
+                    continue;
+                }
                 return Err(LibraryServiceError::UndoConflict);
             }
             current.insert(field.clone(), before_value.clone());
