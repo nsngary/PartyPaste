@@ -1,0 +1,80 @@
+{
+  "app": {
+    "brand": "PARTYPASTE",
+    "overlay": "Overlay",
+    "manager": "Manager"
+  },
+  "common": {
+    "add": "Add",
+    "back": "Back",
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "Confirm",
+    "copy": "Copy",
+    "delete": "Delete",
+    "done": "Done",
+    "edit": "Edit",
+    "moveDown": "Move down",
+    "moveUp": "Move up",
+    "notifications": "Notifications",
+    "open": "Open",
+    "remove": "Remove",
+    "retry": "Try again",
+    "save": "Save",
+    "search": "Search",
+    "undo": "Undo"
+  },
+  "overlay": {
+    "alwaysOnTop": "Always on top",
+    "copyFailed": "Clipboard is unavailable. Try copying again.",
+    "copySuccess": "Copied",
+    "displayMode": "Display mode",
+    "favorites": "Favorites",
+    "fullSentence": "Full sentence",
+    "hide": "Hide overlay",
+    "noPhrases": "No phrases in this game yet.",
+    "preview": "Preview",
+    "recent": "Recent copies",
+    "show": "Show overlay",
+    "templateIncomplete": "Complete every variable before copying.",
+    "titleOnly": "Title only"
+  },
+  "manager": {
+    "allPhrases": "All phrases",
+    "games": "Games",
+    "groups": "Groups",
+    "inspector": "Phrase inspector",
+    "newGame": "New game",
+    "newGroup": "New group",
+    "newPhrase": "New phrase",
+    "noResults": "No matching phrases.",
+    "phraseBody": "Phrase body",
+    "phraseTitle": "Phrase title",
+    "phrases": "Phrases",
+    "searchPlaceholder": "Search title, phrase, or shortcut",
+    "variables": "Variables"
+  },
+  "settings": {
+    "backup": "Backup and restore",
+    "checkForUpdates": "Check for updates",
+    "general": "General",
+    "language": {
+      "english": "English",
+      "label": "Language",
+      "traditionalChinese": "Traditional Chinese"
+    },
+    "shortcuts": "Shortcuts",
+    "title": "Settings",
+    "updates": "Updates"
+  },
+  "fields": {
+    "error": "Check this field.",
+    "optional": "Optional",
+    "required": "Required"
+  },
+  "dialog": {
+    "confirmDelete": "Confirm deletion",
+    "deleteGame": "Delete this game and all of its groups and phrases?",
+    "deleteGroup": "Delete this group and all of its phrases?"
+  }
+}

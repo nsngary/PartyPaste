@@ -1,0 +1,80 @@
+{
+  "app": {
+    "brand": "PARTYPASTE",
+    "overlay": "浮動視窗",
+    "manager": "內容管理"
+  },
+  "common": {
+    "add": "新增",
+    "back": "返回",
+    "cancel": "取消",
+    "close": "關閉",
+    "confirm": "確認",
+    "copy": "複製",
+    "delete": "刪除",
+    "done": "完成",
+    "edit": "編輯",
+    "moveDown": "下移",
+    "moveUp": "上移",
+    "notifications": "通知",
+    "open": "開啟",
+    "remove": "移除",
+    "retry": "再試一次",
+    "save": "儲存",
+    "search": "搜尋",
+    "undo": "復原"
+  },
+  "overlay": {
+    "alwaysOnTop": "永遠置頂",
+    "copyFailed": "無法使用剪貼簿，請再試一次。",
+    "copySuccess": "已複製",
+    "displayMode": "顯示模式",
+    "favorites": "我的最愛",
+    "fullSentence": "完整句子",
+    "hide": "隱藏浮動視窗",
+    "noPhrases": "這個遊戲還沒有片語。",
+    "preview": "預覽",
+    "recent": "最近複製",
+    "show": "顯示浮動視窗",
+    "templateIncomplete": "請填完所有變數後再複製。",
+    "titleOnly": "僅顯示標題"
+  },
+  "manager": {
+    "allPhrases": "所有片語",
+    "games": "遊戲",
+    "groups": "群組",
+    "inspector": "片語編輯區",
+    "newGame": "新增遊戲",
+    "newGroup": "新增群組",
+    "newPhrase": "新增片語",
+    "noResults": "找不到符合的片語。",
+    "phraseBody": "片語內容",
+    "phraseTitle": "片語標題",
+    "phrases": "片語",
+    "searchPlaceholder": "搜尋標題、片語或快捷鍵",
+    "variables": "變數"
+  },
+  "settings": {
+    "backup": "備份與還原",
+    "checkForUpdates": "檢查更新",
+    "general": "一般",
+    "language": {
+      "english": "English",
+      "label": "語言",
+      "traditionalChinese": "繁體中文"
+    },
+    "shortcuts": "快捷鍵",
+    "title": "設定",
+    "updates": "更新"
+  },
+  "fields": {
+    "error": "請檢查這個欄位。",
+    "optional": "選填",
+    "required": "必填"
+  },
+  "dialog": {
+    "confirmDelete": "確認刪除",
+    "deleteGame": "要刪除這個遊戲及其中所有群組與片語嗎？",
+    "deleteGroup": "要刪除這個群組及其中所有片語嗎？"
+  }
+}
