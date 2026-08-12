@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -15,6 +17,8 @@ pub enum TemplateIssueCode {
     EmptyName,
     NestedBrace,
     ControlCharacter,
+    MissingValue,
+    EmptyValue,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -22,6 +26,8 @@ pub enum TemplateIssueCode {
 pub struct TemplateIssue {
     pub code: TemplateIssueCode,
     pub offset: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,6 +65,7 @@ impl TemplateService {
                 issues.push(TemplateIssue {
                     code: TemplateIssueCode::UnbalancedCloseBrace,
                     offset: index,
+                    name: None,
                 });
                 index += 1;
                 continue;
@@ -105,6 +112,7 @@ impl TemplateService {
                 issues.push(TemplateIssue {
                     code,
                     offset: opening_offset,
+                    name: None,
                 });
             } else {
                 tokens.push(TemplateToken::Variable { name });
@@ -137,6 +145,43 @@ impl TemplateService {
             }
         }
         source
+    }
+
+    pub fn resolve(
+        tokens: &[TemplateToken],
+        values: &HashMap<String, String>,
+    ) -> Result<String, Vec<TemplateIssue>> {
+        let mut resolved = String::new();
+        let mut issues = Vec::new();
+        let mut reported_names = HashSet::new();
+
+        for (offset, token) in tokens.iter().enumerate() {
+            match token {
+                TemplateToken::Text { value } => resolved.push_str(value),
+                TemplateToken::Variable { name } => match values.get(name) {
+                    None if reported_names.insert(name) => issues.push(TemplateIssue {
+                        code: TemplateIssueCode::MissingValue,
+                        offset,
+                        name: Some(name.clone()),
+                    }),
+                    Some(value) if value.trim().is_empty() && reported_names.insert(name) => {
+                        issues.push(TemplateIssue {
+                            code: TemplateIssueCode::EmptyValue,
+                            offset,
+                            name: Some(name.clone()),
+                        });
+                    }
+                    Some(value) if !value.trim().is_empty() => resolved.push_str(value),
+                    _ => {}
+                },
+            }
+        }
+
+        if issues.is_empty() {
+            Ok(resolved)
+        } else {
+            Err(issues)
+        }
     }
 }
 

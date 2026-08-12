@@ -166,3 +166,75 @@ export function resolveTemplate(
     ? { ok: true, value }
     : { ok: false, error: issues };
 }
+
+export interface TemplateRenamePlan {
+  sources: string[];
+  renamedTokenCounts: number[];
+  affectedPhraseCount: number;
+  affectedTokenCount: number;
+}
+
+export type TemplateRenameError = "name_conflict" | "invalid_template";
+
+export function planTemplateRename(
+  sources: readonly string[],
+  oldName: string,
+  newName: string,
+  existingNames: readonly string[],
+): Result<TemplateRenamePlan, TemplateRenameError> {
+  if (existingNames.some((name) => name !== oldName && name === newName)) {
+    return { ok: false, error: "name_conflict" };
+  }
+
+  const renamedSources: string[] = [];
+  const renamedTokenCounts: number[] = [];
+  let affectedPhraseCount = 0;
+  let affectedTokenCount = 0;
+
+  for (const source of sources) {
+    const parsed = parseTemplate(source);
+    if (parsed.issues.length > 0) {
+      return { ok: false, error: "invalid_template" };
+    }
+
+    let phraseTokenCount = 0;
+    const tokens = parsed.tokens.map((token): TemplateToken => {
+      if (token.type === "variable" && token.name === oldName) {
+        phraseTokenCount += 1;
+        return { type: "variable", name: newName };
+      }
+      return token;
+    });
+
+    renamedSources.push(renderTemplate(tokens));
+    renamedTokenCounts.push(phraseTokenCount);
+    affectedTokenCount += phraseTokenCount;
+    if (phraseTokenCount > 0) {
+      affectedPhraseCount += 1;
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      sources: renamedSources,
+      renamedTokenCounts,
+      affectedPhraseCount,
+      affectedTokenCount,
+    },
+  };
+}
+
+function renderTemplate(tokens: readonly TemplateToken[]): string {
+  let source = "";
+  for (const token of tokens) {
+    if (token.type === "variable") {
+      source += `{${token.name}}`;
+      continue;
+    }
+    for (const character of token.value) {
+      source += character === "{" ? "{{" : character === "}" ? "}}" : character;
+    }
+  }
+  return source;
+}

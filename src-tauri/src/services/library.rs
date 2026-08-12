@@ -18,6 +18,8 @@ pub enum VariableServiceError {
     InvalidName,
     #[error("variable preset is invalid")]
     InvalidPreset,
+    #[error("variable name conflicts with an existing definition")]
+    NameConflict,
     #[error("stored phrase template is invalid")]
     InvalidTemplate,
     #[error(transparent)]
@@ -246,6 +248,11 @@ fn rename_in_transaction(
     normalized_name: &str,
 ) -> Result<RenameImpact, VariableServiceError> {
     let definitions = tx.variable_definitions_for_game(&definition.game_id)?;
+    if definitions.iter().any(|candidate| {
+        candidate.id != definition.id && candidate.normalized_name == normalized_name
+    }) {
+        return Err(VariableServiceError::NameConflict);
+    }
     let definition_ids = definitions
         .iter()
         .map(|candidate| (candidate.normalized_name.as_str(), candidate.id.as_str()))

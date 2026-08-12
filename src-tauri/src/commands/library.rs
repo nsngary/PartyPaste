@@ -69,6 +69,7 @@ fn service_error(error: VariableServiceError) -> AppError {
         },
         VariableServiceError::InvalidName
         | VariableServiceError::InvalidPreset
+        | VariableServiceError::NameConflict
         | VariableServiceError::InvalidTemplate => AppError::Validation {
             message_key: "errors.validation",
         },

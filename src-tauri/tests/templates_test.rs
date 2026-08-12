@@ -5,6 +5,7 @@ use partypaste_lib::db::models::{
 };
 use partypaste_lib::services::library::{
     SaveVariableDefinition, SaveVariablePreset, SaveVariableResult, VariableService,
+    VariableServiceError,
 };
 use partypaste_lib::services::templates::{TemplateIssueCode, TemplateService, TemplateToken};
 use serde::Deserialize;
@@ -14,6 +15,65 @@ use serde::Deserialize;
 struct TemplateFixtures {
     valid: Vec<ValidFixture>,
     invalid: Vec<InvalidFixture>,
+    resolution: Vec<ResolutionFixture>,
+    rename: RenameFixture,
+    atomic_rename: AtomicRenameFixture,
+    delete_fallback: DeleteFallbackFixture,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResolutionFixture {
+    name: String,
+    source: String,
+    values: std::collections::HashMap<String, String>,
+    value: Option<String>,
+    issues: Option<Vec<partypaste_lib::services::templates::TemplateIssue>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenameFixture {
+    old_name: String,
+    new_name: String,
+    existing_names: Vec<String>,
+    phrases: Vec<RenamePhraseFixture>,
+    affected_phrase_count: usize,
+    affected_token_count: usize,
+    expected_reference_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenamePhraseFixture {
+    id: String,
+    source: String,
+    renamed_source: String,
+    renamed_token_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtomicRenameFixture {
+    old_name: String,
+    new_name: String,
+    existing_names: Vec<String>,
+    expected_error: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteFallbackFixture {
+    name: String,
+    affected_phrase_count: usize,
+    free_text_values: std::collections::HashMap<String, String>,
+    phrases: Vec<DeletePhraseFixture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeletePhraseFixture {
+    id: String,
+    source: String,
+    resolved: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +138,13 @@ fn definition(id: &str, game_id: &str, name: &str, sort_order: i64) -> VariableD
 }
 
 fn seeded_repository() -> Repository {
+    let fixtures = fixtures();
+    let rename = fixtures.rename;
+    let other_name = rename
+        .existing_names
+        .iter()
+        .find(|name| *name != &rename.old_name)
+        .unwrap();
     let mut repository = Repository::in_memory().unwrap();
     repository
         .transaction(|tx| {
@@ -87,13 +154,33 @@ fn seeded_repository() -> Repository {
             tx.insert_game(&second_game)?;
             tx.insert_group(&group("group-1", "game-1"))?;
             tx.insert_group(&group("group-2", "game-2"))?;
-            tx.insert_phrase(&phrase("phrase-1", "group-1", "{人數} + {人數}", 0))?;
-            tx.insert_phrase(&phrase("phrase-2", "group-1", "{{人數}} and {人數}", 1))?;
-            tx.insert_phrase(&phrase("phrase-3", "group-1", "{其他}", 2))?;
-            tx.insert_phrase(&phrase("phrase-4", "group-2", "{人數}", 0))?;
-            tx.insert_variable_definition(&definition("var-people", "game-1", "人數", 0))?;
-            tx.insert_variable_definition(&definition("var-other", "game-1", "其他", 1))?;
-            tx.insert_variable_definition(&definition("var-people-2", "game-2", "人數", 0))?;
+            for (sort_order, fixture) in rename.phrases.iter().enumerate() {
+                tx.insert_phrase(&phrase(
+                    &fixture.id,
+                    "group-1",
+                    &fixture.source,
+                    sort_order as i64,
+                ))?;
+            }
+            tx.insert_phrase(&phrase(
+                "phrase-4",
+                "group-2",
+                &format!("{{{}}}", rename.old_name),
+                0,
+            ))?;
+            tx.insert_variable_definition(&definition(
+                "var-people",
+                "game-1",
+                &rename.old_name,
+                0,
+            ))?;
+            tx.insert_variable_definition(&definition("var-other", "game-1", other_name, 1))?;
+            tx.insert_variable_definition(&definition(
+                "var-people-2",
+                "game-2",
+                &rename.old_name,
+                0,
+            ))?;
             tx.insert_variable_preset(&VariablePresetRecord {
                 id: "preset-1".into(),
                 variable_definition_id: "var-people".into(),
@@ -111,6 +198,22 @@ fn seeded_repository() -> Repository {
         })
         .unwrap();
     repository
+}
+
+#[test]
+fn templates_resolver_consumes_the_shared_typescript_fixtures() {
+    let fixtures = fixtures();
+
+    for fixture in fixtures.resolution {
+        let scan = TemplateService::scan(&fixture.source);
+        assert!(scan.issues.is_empty(), "{}", fixture.name);
+        let result = TemplateService::resolve(&scan.tokens, &fixture.values);
+        match (fixture.value, fixture.issues) {
+            (Some(value), None) => assert_eq!(result, Ok(value), "{}", fixture.name),
+            (None, Some(issues)) => assert_eq!(result, Err(issues), "{}", fixture.name),
+            _ => panic!("{} must declare exactly one expected result", fixture.name),
+        }
+    }
 }
 
 #[test]
@@ -139,45 +242,80 @@ fn templates_scanner_consumes_the_shared_typescript_fixtures() {
 
 #[test]
 fn templates_rename_updates_matching_tokens_and_rebuilds_references_atomically() {
+    let fixture = fixtures().rename;
     let mut repository = seeded_repository();
 
-    let impact = VariableService::rename_definition(&mut repository, "var-people", "隊伍").unwrap();
+    let impact =
+        VariableService::rename_definition(&mut repository, "var-people", &fixture.new_name)
+            .unwrap();
 
-    assert_eq!(impact.affected_phrase_count, 2);
-    assert_eq!(impact.affected_token_count, 3);
+    assert_eq!(impact.affected_phrase_count, fixture.affected_phrase_count);
+    assert_eq!(impact.affected_token_count, fixture.affected_token_count);
     let snapshot = repository.snapshot().unwrap();
-    assert_eq!(snapshot.variable_definitions[0].name, "隊伍");
-    assert_eq!(snapshot.variable_definitions[0].normalized_name, "隊伍");
-    assert_eq!(snapshot.phrases[0].body_template, "{隊伍} + {隊伍}");
-    assert_eq!(snapshot.phrases[1].body_template, "{{人數}} and {隊伍}");
-    assert_eq!(snapshot.phrases[3].body_template, "{人數}");
+    assert_eq!(snapshot.variable_definitions[0].name, fixture.new_name);
+    for phrase_fixture in &fixture.phrases {
+        let stored = snapshot
+            .phrases
+            .iter()
+            .find(|phrase| phrase.id == phrase_fixture.id)
+            .unwrap();
+        assert_eq!(stored.body_template, phrase_fixture.renamed_source);
+    }
+    assert_eq!(
+        snapshot
+            .phrases
+            .iter()
+            .find(|phrase| phrase.id == "phrase-4")
+            .unwrap()
+            .body_template,
+        format!("{{{}}}", fixture.old_name)
+    );
     assert_eq!(
         snapshot
             .phrase_variable_refs
             .iter()
             .filter(|reference| reference.variable_definition_id == "var-people")
             .count(),
-        3
+        fixture.expected_reference_count
+    );
+    assert_eq!(
+        fixture
+            .phrases
+            .iter()
+            .map(|phrase| phrase.renamed_token_count)
+            .sum::<usize>(),
+        impact.affected_token_count
     );
 }
 
 #[test]
 fn templates_conflicting_rename_leaves_the_entire_snapshot_unchanged() {
+    let fixture = fixtures().atomic_rename;
     let mut repository = seeded_repository();
     let before = repository.snapshot().unwrap();
 
-    assert!(VariableService::rename_definition(&mut repository, "var-people", "其他").is_err());
+    assert_eq!(fixture.old_name, fixtures().rename.old_name);
+    assert!(fixture.existing_names.contains(&fixture.new_name));
+    let error =
+        VariableService::rename_definition(&mut repository, "var-people", &fixture.new_name)
+            .unwrap_err();
+    let error_code = match error {
+        VariableServiceError::NameConflict => "name_conflict",
+        _ => "unexpected_error",
+    };
+    assert_eq!(error_code, fixture.expected_error);
 
     assert_eq!(repository.snapshot().unwrap(), before);
 }
 
 #[test]
 fn templates_delete_removes_assistance_but_leaves_unknown_tokens_as_free_text() {
+    let fixture = fixtures().delete_fallback;
     let mut repository = seeded_repository();
 
     let impact = VariableService::delete_definition(&mut repository, "var-people").unwrap();
 
-    assert_eq!(impact.affected_phrase_count, 2);
+    assert_eq!(impact.affected_phrase_count, fixture.affected_phrase_count);
     let snapshot = repository.snapshot().unwrap();
     assert!(
         snapshot
@@ -187,23 +325,21 @@ fn templates_delete_removes_assistance_but_leaves_unknown_tokens_as_free_text() 
     );
     assert!(snapshot.variable_presets.is_empty());
     assert!(snapshot.phrase_variable_refs.is_empty());
-    assert_eq!(snapshot.phrases[0].body_template, "{人數} + {人數}");
-    let scan = TemplateService::scan(&snapshot.phrases[0].body_template);
-    assert!(scan.issues.is_empty());
-    assert_eq!(
-        scan.tokens,
-        vec![
-            TemplateToken::Variable {
-                name: "人數".into()
-            },
-            TemplateToken::Text {
-                value: " + ".into()
-            },
-            TemplateToken::Variable {
-                name: "人數".into()
-            }
-        ]
-    );
+    assert!(fixture.free_text_values.contains_key(&fixture.name));
+    for phrase_fixture in fixture.phrases {
+        let stored = snapshot
+            .phrases
+            .iter()
+            .find(|phrase| phrase.id == phrase_fixture.id)
+            .unwrap();
+        assert_eq!(stored.body_template, phrase_fixture.source);
+        let scan = TemplateService::scan(&stored.body_template);
+        assert!(scan.issues.is_empty());
+        assert_eq!(
+            TemplateService::resolve(&scan.tokens, &fixture.free_text_values),
+            Ok(phrase_fixture.resolved)
+        );
+    }
 }
 
 #[test]

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplate, resolveTemplate } from "./template";
+import { parseTemplate, planTemplateRename, resolveTemplate } from "./template";
 import fixtures from "./template.fixtures.json";
+
+function definedValues(values: object): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+}
 
 describe("parseTemplate shared fixtures", () => {
   for (const fixture of fixtures.valid) {
@@ -24,33 +32,74 @@ describe("parseTemplate shared fixtures", () => {
 });
 
 describe("resolveTemplate", () => {
-  it("resolves repeated variables from a structured token stream", () => {
-    const parsed = parseTemplate("隊伍有 {人數} 人，共 {人數} 位");
+  for (const fixture of fixtures.resolution) {
+    it(fixture.name, () => {
+      const parsed = parseTemplate(fixture.source);
 
-    expect(resolveTemplate(parsed.tokens, { 人數: "4" })).toEqual({
+      expect(
+        resolveTemplate(parsed.tokens, definedValues(fixture.values)),
+      ).toEqual(
+        "value" in fixture
+          ? { ok: true, value: fixture.value }
+          : { ok: false, error: fixture.issues },
+      );
+    });
+  }
+});
+
+describe("shared variable lifecycle projections", () => {
+  it("plans the shared rename transformation and impact counts", () => {
+    const fixture = fixtures.rename;
+
+    expect(
+      planTemplateRename(
+        fixture.phrases.map((phrase) => phrase.source),
+        fixture.oldName,
+        fixture.newName,
+        fixture.existingNames,
+      ),
+    ).toEqual({
       ok: true,
-      value: "隊伍有 4 人，共 4 位",
+      value: {
+        sources: fixture.phrases.map((phrase) => phrase.renamedSource),
+        renamedTokenCounts: fixture.phrases.map(
+          (phrase) => phrase.renamedTokenCount,
+        ),
+        affectedPhraseCount: fixture.affectedPhraseCount,
+        affectedTokenCount: fixture.affectedTokenCount,
+      },
     });
   });
 
-  it("accepts a free-text value for a variable absent from the library", () => {
-    const parsed = parseTemplate("前往 {陌生欄位}");
+  it("rejects the shared conflicting rename without producing transformations", () => {
+    const fixture = fixtures.atomicRename;
 
-    expect(resolveTemplate(parsed.tokens, { 陌生欄位: "北門" })).toEqual({
-      ok: true,
-      value: "前往 北門",
-    });
+    expect(
+      planTemplateRename(
+        fixtures.rename.phrases.map((phrase) => phrase.source),
+        fixture.oldName,
+        fixture.newName,
+        fixture.existingNames,
+      ),
+    ).toEqual({ ok: false, error: fixture.expectedError });
   });
 
-  it("reports every variable without a non-empty value", () => {
-    const parsed = parseTemplate("{人數} / {時間} / {地點}");
+  it("resolves deleted definitions through the shared free-text fallback", () => {
+    const fixture = fixtures.deleteFallback;
 
-    expect(resolveTemplate(parsed.tokens, { 人數: "4", 時間: "" })).toEqual({
-      ok: false,
-      error: [
-        { code: "empty_value", name: "時間", offset: 2 },
-        { code: "missing_value", name: "地點", offset: 4 },
-      ],
-    });
+    expect(fixture.phrases.length).toBe(fixture.affectedPhraseCount);
+    expect(Object.keys(fixture.freeTextValues)).toContain(fixture.name);
+
+    expect(
+      fixture.phrases.map((phrase) => {
+        const parsed = parseTemplate(phrase.source);
+        return resolveTemplate(
+          parsed.tokens,
+          definedValues(fixture.freeTextValues),
+        );
+      }),
+    ).toEqual(
+      fixture.phrases.map((phrase) => ({ ok: true, value: phrase.resolved })),
+    );
   });
 });
