@@ -5,6 +5,11 @@ describe("library command API", () => {
   it.each([
     ["createGame", "create_game", { input: { id: "g", name: "Game" } }],
     ["updateGame", "update_game", { input: { id: "g", name: "Renamed" } }],
+    [
+      "setOverlayDisplayMode",
+      "set_overlay_display_mode",
+      { gameId: "g", displayMode: "full" },
+    ],
     ["deleteGame", "delete_game", { gameId: "g" }],
     [
       "createGroup",

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use partypaste_lib::db::Repository;
+use partypaste_lib::db::models::OverlayDisplayMode;
 use partypaste_lib::services::library::{
     CreateGameInput, CreateGroupInput, CreatePhraseInput, LibraryService, LibraryServiceError,
     SaveVariableDefinition, SaveVariablePreset, UpdateGameInput, UpdateGroupInput,
@@ -50,6 +51,20 @@ fn create_phrase(
             hotkey: hotkey.map(str::to_owned),
         })
         .unwrap();
+}
+
+#[test]
+fn game_display_mode_updates_without_renaming_the_game() {
+    let now = Arc::new(AtomicU64::new(1_000));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Guild Wars");
+
+    let updated = service
+        .set_overlay_display_mode("game", OverlayDisplayMode::Full)
+        .unwrap();
+
+    assert_eq!(updated.name, "Guild Wars");
+    assert_eq!(updated.overlay_display_mode, OverlayDisplayMode::Full);
 }
 
 #[test]

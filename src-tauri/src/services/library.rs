@@ -476,6 +476,23 @@ impl LibraryService {
         })
     }
 
+    pub fn set_overlay_display_mode(
+        &mut self,
+        game_id: &str,
+        display_mode: OverlayDisplayMode,
+    ) -> Result<GameRecord, LibraryServiceError> {
+        let mut record = self
+            .repository
+            .snapshot()?
+            .games
+            .into_iter()
+            .find(|game| game.id == game_id)
+            .ok_or(LibraryServiceError::NotFound)?;
+        record.overlay_display_mode = display_mode;
+        self.repository.transaction(|tx| tx.update_game(&record))?;
+        Ok(record)
+    }
+
     pub fn create_group(
         &mut self,
         input: CreateGroupInput,

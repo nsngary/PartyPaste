@@ -3,7 +3,9 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::State;
 
 use crate::db::Repository;
-use crate::db::models::{GameRecord, GroupRecord, LibrarySnapshot, PhraseRecord};
+use crate::db::models::{
+    GameRecord, GroupRecord, LibrarySnapshot, OverlayDisplayMode, PhraseRecord,
+};
 use crate::error::AppError;
 use crate::services::library::{
     CreateGameInput, CreateGroupInput, CreatePhraseInput, GameDeleteImpact, GroupDeleteImpact,
@@ -56,6 +58,18 @@ pub fn update_game(
     input: UpdateGameInput,
 ) -> Result<MutationResult<GameRecord>, AppError> {
     state.lock()?.update_game(input).map_err(library_error)
+}
+
+#[tauri::command]
+pub fn set_overlay_display_mode(
+    state: State<'_, LibraryServiceState>,
+    game_id: String,
+    display_mode: OverlayDisplayMode,
+) -> Result<GameRecord, AppError> {
+    state
+        .lock()?
+        .set_overlay_display_mode(&game_id, display_mode)
+        .map_err(library_error)
 }
 
 #[tauri::command]

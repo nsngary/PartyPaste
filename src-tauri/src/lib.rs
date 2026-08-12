@@ -63,6 +63,7 @@ pub fn run() {
             commands::library::get_library,
             commands::library::create_game,
             commands::library::update_game,
+            commands::library::set_overlay_display_mode,
             commands::library::delete_game,
             commands::library::create_group,
             commands::library::update_group,

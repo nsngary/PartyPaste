@@ -150,6 +150,10 @@ export function createLibraryApi(
       call<CreateGameInput, MutationResult<GameDto>>("create_game", input),
     updateGame: (input: UpdateGameInput) =>
       call<UpdateGameInput, MutationResult<GameDto>>("update_game", input),
+    setOverlayDisplayMode: (input: {
+      gameId: string;
+      displayMode: GameDto["overlayDisplayMode"];
+    }) => call<typeof input, GameDto>("set_overlay_display_mode", input),
     deleteGame: (input: { gameId: string }) =>
       call<typeof input, MutationResult<LibrarySnapshot>>("delete_game", input),
     createGroup: (input: CreateGroupInput) =>
