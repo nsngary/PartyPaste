@@ -11,8 +11,25 @@ export const commandErrorCodes = [
 
 export type CommandErrorCode = (typeof commandErrorCodes)[number];
 
+export const commandErrorMessageKeys = {
+  validation: "errors.validation",
+  not_found: "errors.notFound",
+  shortcut_conflict: "errors.shortcutConflict",
+  clipboard_busy: "errors.clipboardBusy",
+  backup_invalid: "errors.backupInvalid",
+  database: "errors.database",
+  update: "errors.update",
+  internal: "errors.internal",
+} as const satisfies Record<CommandErrorCode, string>;
+
+export const commandErrorDetailFields = ["shortcut", "backup"] as const;
+
+export interface CommandErrorDetails {
+  field: (typeof commandErrorDetailFields)[number];
+}
+
 export interface CommandErrorDto {
   code: CommandErrorCode;
-  messageKey: string;
-  details?: Record<string, string>;
+  messageKey: (typeof commandErrorMessageKeys)[CommandErrorCode];
+  details?: CommandErrorDetails;
 }

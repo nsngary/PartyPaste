@@ -1,8 +1,11 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import {
   type CommandErrorCode,
+  type CommandErrorDetails,
   type CommandErrorDto,
   commandErrorCodes,
+  commandErrorDetailFields,
+  commandErrorMessageKeys,
 } from "./contracts";
 
 export type NativeInvoke = <TOutput>(
@@ -12,8 +15,8 @@ export type NativeInvoke = <TOutput>(
 
 export class CommandError extends Error {
   readonly code: CommandErrorCode;
-  readonly messageKey: string;
-  readonly details?: Record<string, string>;
+  readonly messageKey: CommandErrorDto["messageKey"];
+  readonly details?: CommandErrorDetails;
 
   constructor({ code, messageKey, details }: CommandErrorDto) {
     super(messageKey);
@@ -24,22 +27,51 @@ export class CommandError extends Error {
   }
 }
 
+function isCommandErrorDetails(value: unknown): value is CommandErrorDetails {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const details = value as Partial<CommandErrorDetails>;
+  return (
+    Object.keys(details).length === 1 &&
+    typeof details.field === "string" &&
+    commandErrorDetailFields.includes(
+      details.field as CommandErrorDetails["field"],
+    )
+  );
+}
+
 function isCommandErrorDto(value: unknown): value is CommandErrorDto {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
   const candidate = value as Partial<CommandErrorDto>;
+  if (
+    typeof candidate.code !== "string" ||
+    !commandErrorCodes.includes(candidate.code as CommandErrorCode)
+  ) {
+    return false;
+  }
+
+  const code = candidate.code as CommandErrorCode;
   return (
-    typeof candidate.messageKey === "string" &&
-    typeof candidate.code === "string" &&
-    commandErrorCodes.includes(candidate.code as CommandErrorCode)
+    candidate.messageKey === commandErrorMessageKeys[code] &&
+    (candidate.details === undefined ||
+      isCommandErrorDetails(candidate.details))
   );
 }
 
 function toCommandError(error: unknown): CommandError {
   if (isCommandErrorDto(error)) {
-    return new CommandError(error);
+    return new CommandError({
+      code: error.code,
+      messageKey: commandErrorMessageKeys[error.code],
+      ...(error.details === undefined
+        ? {}
+        : { details: { field: error.details.field } }),
+    });
   }
 
   return new CommandError({ code: "internal", messageKey: "errors.internal" });
