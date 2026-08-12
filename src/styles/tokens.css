@@ -1,0 +1,51 @@
+:root {
+  color-scheme: dark;
+
+  --color-ink-950: #0c1814;
+  --color-ink-900: #12251f;
+  --color-ink-850: #172d26;
+  --color-ink-800: #1d372e;
+  --color-amber-500: #e6aa35;
+  --color-amber-400: #f0bd55;
+  --color-warm-100: #f7f0df;
+  --color-warm-200: #ded5c2;
+  --color-sage-300: #a9bca9;
+  --color-sage-500: #718d79;
+  --color-danger-400: #ef917b;
+  --color-danger-700: #7a3128;
+
+  --surface-canvas: var(--color-ink-950);
+  --surface-default: var(--color-ink-900);
+  --surface-raised: var(--color-ink-850);
+  --surface-active: var(--color-ink-800);
+  --text-primary: var(--color-warm-100);
+  --text-secondary: var(--color-sage-300);
+  --text-disabled: var(--color-sage-500);
+  --action-primary: var(--color-amber-500);
+  --action-primary-hover: var(--color-amber-400);
+  --action-on-primary: var(--color-ink-950);
+  --border-subtle: rgba(169, 188, 169, 0.23);
+  --border-strong: rgba(169, 188, 169, 0.46);
+  --focus-ring: 0 0 0 3px rgba(230, 170, 53, 0.34);
+  --shadow-raised: 0 2px 8px rgba(4, 10, 8, 0.28);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --control-height: 2.25rem;
+  --transition-fast: 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast: 0ms;
+  }
+}

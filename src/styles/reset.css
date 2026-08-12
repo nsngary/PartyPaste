@@ -1,0 +1,56 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 240px;
+  background: var(--surface-canvas);
+}
+
+body {
+  min-width: 240px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-block-start: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+::selection {
+  background: var(--action-primary);
+  color: var(--action-on-primary);
+}

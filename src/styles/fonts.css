@@ -1,0 +1,20 @@
+@import "@fontsource-variable/noto-sans-tc/wght.css";
+@import "@fontsource/press-start-2p/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+
+:root {
+  --font-ui: "Noto Sans TC Variable", sans-serif;
+  --font-brand: "Press Start 2P", fantasy;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+
+.pp-brand-label {
+  font-family: var(--font-brand);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+
+.pp-technical-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}

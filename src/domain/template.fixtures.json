@@ -1,0 +1,136 @@
+{
+  "valid": [
+    {
+      "name": "unicode variable",
+      "source": "加入 {人數} 人",
+      "tokens": [
+        { "type": "text", "value": "加入 " },
+        { "type": "variable", "name": "人數" },
+        { "type": "text", "value": " 人" }
+      ]
+    },
+    {
+      "name": "escaped braces",
+      "source": "使用 {{人數}} 標籤",
+      "tokens": [{ "type": "text", "value": "使用 {人數} 標籤" }]
+    },
+    {
+      "name": "repeated variables",
+      "source": "{人數}/{人數}",
+      "tokens": [
+        { "type": "variable", "name": "人數" },
+        { "type": "text", "value": "/" },
+        { "type": "variable", "name": "人數" }
+      ]
+    },
+    {
+      "name": "unknown variable remains editable",
+      "source": "前往 {陌生欄位}",
+      "tokens": [
+        { "type": "text", "value": "前往 " },
+        { "type": "variable", "name": "陌生欄位" }
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unbalanced opening brace",
+      "source": "加入 {人數",
+      "issueCodes": ["unbalanced_open_brace"]
+    },
+    {
+      "name": "unbalanced closing brace",
+      "source": "加入 人數}",
+      "issueCodes": ["unbalanced_close_brace"]
+    },
+    {
+      "name": "empty variable name",
+      "source": "加入 {}",
+      "issueCodes": ["empty_name"]
+    },
+    {
+      "name": "nested variable",
+      "source": "加入 {外{內}}",
+      "issueCodes": ["nested_brace"]
+    },
+    {
+      "name": "control character in name",
+      "source": "加入 {人\n數}",
+      "issueCodes": ["control_character"]
+    }
+  ],
+  "resolution": [
+    {
+      "name": "repeated variables use one value",
+      "source": "隊伍有 {人數} 人，共 {人數} 位",
+      "values": { "人數": "4" },
+      "value": "隊伍有 4 人，共 4 位"
+    },
+    {
+      "name": "unknown variables accept free text",
+      "source": "前往 {陌生欄位}",
+      "values": { "陌生欄位": "北門" },
+      "value": "前往 北門"
+    },
+    {
+      "name": "all incomplete variables are reported",
+      "source": "{人數} / {時間} / {地點}",
+      "values": { "人數": "4", "時間": "" },
+      "issues": [
+        { "code": "empty_value", "name": "時間", "offset": 2 },
+        { "code": "missing_value", "name": "地點", "offset": 4 }
+      ]
+    }
+  ],
+  "rename": {
+    "oldName": "人數",
+    "newName": "隊伍",
+    "existingNames": ["人數", "其他"],
+    "phrases": [
+      {
+        "id": "phrase-1",
+        "source": "{人數} + {人數}",
+        "renamedSource": "{隊伍} + {隊伍}",
+        "renamedTokenCount": 2
+      },
+      {
+        "id": "phrase-2",
+        "source": "{{人數}} and {人數}",
+        "renamedSource": "{{人數}} and {隊伍}",
+        "renamedTokenCount": 1
+      },
+      {
+        "id": "phrase-3",
+        "source": "{其他}",
+        "renamedSource": "{其他}",
+        "renamedTokenCount": 0
+      }
+    ],
+    "affectedPhraseCount": 2,
+    "affectedTokenCount": 3,
+    "expectedReferenceCount": 3
+  },
+  "atomicRename": {
+    "oldName": "人數",
+    "newName": "其他",
+    "existingNames": ["人數", "其他"],
+    "expectedError": "name_conflict"
+  },
+  "deleteFallback": {
+    "name": "人數",
+    "affectedPhraseCount": 2,
+    "freeTextValues": { "人數": "4" },
+    "phrases": [
+      {
+        "id": "phrase-1",
+        "source": "{人數} + {人數}",
+        "resolved": "4 + 4"
+      },
+      {
+        "id": "phrase-2",
+        "source": "{{人數}} and {人數}",
+        "resolved": "{人數} and 4"
+      }
+    ]
+  }
+}
