@@ -33,3 +33,12 @@ export interface CommandErrorDto {
   messageKey: (typeof commandErrorMessageKeys)[CommandErrorCode];
   details?: CommandErrorDetails;
 }
+
+export interface ShortcutsDto {
+  overlay: string;
+  phrases: Record<string, string>;
+}
+
+export type ShortcutEvent =
+  | { type: "copy_phrase"; phraseId: string }
+  | { type: "show_overlay"; openTemplatePhraseId: string | null };

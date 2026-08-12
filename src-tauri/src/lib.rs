@@ -8,6 +8,7 @@ use tauri::Manager;
 
 use commands::clipboard::ClipboardServiceState;
 use commands::library::LibraryServiceState;
+use commands::settings::{ShortcutSettingsState, TauriShortcutPort};
 use db::Repository;
 use paths::resolve_data_paths;
 
@@ -22,18 +23,27 @@ pub fn run() {
                 .is_some_and(|directory| directory.join("partypaste.portable").exists());
             let paths = resolve_data_paths(&executable, &app_data, portable);
             let repository = Repository::open(paths.clone())?;
-            let clipboard_repository = Repository::open(paths)?;
+            let clipboard_repository = Repository::open(paths.clone())?;
+            let shortcut_repository = Repository::open(paths)?;
             app.manage(LibraryServiceState::new(repository));
             app.manage(ClipboardServiceState::new(
                 clipboard_repository,
                 app.handle().clone(),
             ));
+            app.manage(ShortcutSettingsState::new(
+                shortcut_repository,
+                TauriShortcutPort::new(app.handle().clone()),
+            )?);
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::clipboard::copy_phrase,
             commands::clipboard::get_recent_copies,
+            commands::settings::get_shortcuts,
+            commands::settings::set_overlay_shortcut,
+            commands::settings::set_phrase_shortcut,
             commands::library::get_library,
             commands::library::create_game,
             commands::library::update_game,

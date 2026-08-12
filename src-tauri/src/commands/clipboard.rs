@@ -39,6 +39,12 @@ impl ClipboardServiceState {
             message_key: "errors.internal",
         })
     }
+
+    pub fn copy_plain_shortcut(&self, phrase_id: &str) -> Result<CopySuccessDto, AppError> {
+        self.lock()?
+            .copy_phrase(phrase_id, &HashMap::new())
+            .map_err(command_error_for_copy)
+    }
 }
 
 #[tauri::command]
