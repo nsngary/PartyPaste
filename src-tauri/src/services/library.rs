@@ -301,10 +301,6 @@ impl LibraryService {
         &self.repository
     }
 
-    pub fn repository_mut(&mut self) -> &mut Repository {
-        &mut self.repository
-    }
-
     pub fn list_variable_definitions(
         &self,
         game_id: &str,
@@ -469,7 +465,7 @@ impl LibraryService {
     pub fn create_phrase(
         &mut self,
         input: CreatePhraseInput,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         let title = validate_library_text(&input.title, 120)
             .ok_or(LibraryServiceError::InvalidPhraseTitle)?;
         let body_template = validate_phrase_body(&input.body_template)
@@ -505,14 +501,14 @@ impl LibraryService {
                 refresh_phrase_references(tx, &record)?;
                 Ok::<_, LibraryServiceError>(())
             })?;
-            Ok(record)
+            Ok(repository.snapshot()?)
         })
     }
 
     pub fn update_phrase(
         &mut self,
         input: UpdatePhraseInput,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         let title = validate_library_text(&input.title, 120)
             .ok_or(LibraryServiceError::InvalidPhraseTitle)?;
         let body_template = validate_phrase_body(&input.body_template)
@@ -533,7 +529,7 @@ impl LibraryService {
                 refresh_phrase_references(tx, &record)?;
                 Ok::<_, LibraryServiceError>(())
             })?;
-            Ok(record)
+            Ok(repository.snapshot()?)
         })
     }
 
@@ -994,6 +990,7 @@ impl LibraryService {
         let current = self.repository.snapshot()?;
         let restored = reverse_change(current, inverse)?;
         self.repository.replace_snapshot(&restored)?;
+        let restored = self.repository.snapshot()?;
         self.journal.consume(operation_id);
         Ok(restored)
     }
@@ -1004,6 +1001,7 @@ fn reverse_change(
     inverse: InverseOperation,
 ) -> Result<LibrarySnapshot, LibraryServiceError> {
     let InverseOperation::ReverseChange { before, after } = inverse;
+    let current_orders = SnapshotOrders::from_snapshot(&current);
     reverse_records(&mut current.games, &before.games, &after.games, |record| {
         record.id.clone()
     })?;
@@ -1043,7 +1041,7 @@ fn reverse_change(
         &after.settings,
         |record| record.key.clone(),
     )?;
-    normalize_snapshot_orders(&mut current);
+    restore_snapshot_orders(&mut current, &before, &after, &current_orders);
     validate_snapshot_relationships(&current)?;
     Ok(current)
 }
@@ -1173,71 +1171,367 @@ fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
         .map_err(|_| LibraryServiceError::UndoConflict)
 }
 
-fn normalize_snapshot_orders(snapshot: &mut LibrarySnapshot) {
-    snapshot
-        .games
-        .sort_by_key(|record| (record.sort_order, record.id.clone()));
-    for (index, record) in snapshot.games.iter_mut().enumerate() {
-        record.sort_order = index as i64;
+#[derive(Default)]
+struct SnapshotOrders {
+    games: Vec<String>,
+    groups: HashMap<String, Vec<String>>,
+    phrases: HashMap<String, Vec<String>>,
+    favorites: HashMap<String, Vec<String>>,
+    definitions: HashMap<String, Vec<String>>,
+    presets: HashMap<String, Vec<String>>,
+}
+
+impl SnapshotOrders {
+    fn from_snapshot(snapshot: &LibrarySnapshot) -> Self {
+        let mut orders = Self {
+            games: ordered_ids(
+                &snapshot.games,
+                |record| record.sort_order,
+                |record| record.id.clone(),
+            ),
+            ..Self::default()
+        };
+        for game in &snapshot.games {
+            orders.groups.insert(
+                game.id.clone(),
+                ordered_ids(
+                    &snapshot
+                        .groups
+                        .iter()
+                        .filter(|record| record.game_id == game.id)
+                        .collect::<Vec<_>>(),
+                    |record| record.sort_order,
+                    |record| record.id.clone(),
+                ),
+            );
+            let group_ids = snapshot
+                .groups
+                .iter()
+                .filter(|record| record.game_id == game.id)
+                .map(|record| record.id.as_str())
+                .collect::<HashSet<_>>();
+            orders.favorites.insert(
+                game.id.clone(),
+                ordered_ids(
+                    &snapshot
+                        .phrases
+                        .iter()
+                        .filter(|record| {
+                            record.favorite && group_ids.contains(record.group_id.as_str())
+                        })
+                        .collect::<Vec<_>>(),
+                    |record| record.favorite_order.unwrap_or(i64::MAX),
+                    |record| record.id.clone(),
+                ),
+            );
+            orders.definitions.insert(
+                game.id.clone(),
+                ordered_ids(
+                    &snapshot
+                        .variable_definitions
+                        .iter()
+                        .filter(|record| record.game_id == game.id)
+                        .collect::<Vec<_>>(),
+                    |record| record.sort_order,
+                    |record| record.id.clone(),
+                ),
+            );
+        }
+        for group in &snapshot.groups {
+            orders.phrases.insert(
+                group.id.clone(),
+                ordered_ids(
+                    &snapshot
+                        .phrases
+                        .iter()
+                        .filter(|record| record.group_id == group.id)
+                        .collect::<Vec<_>>(),
+                    |record| record.sort_order,
+                    |record| record.id.clone(),
+                ),
+            );
+        }
+        for definition in &snapshot.variable_definitions {
+            orders.presets.insert(
+                definition.id.clone(),
+                ordered_ids(
+                    &snapshot
+                        .variable_presets
+                        .iter()
+                        .filter(|record| record.variable_definition_id == definition.id)
+                        .collect::<Vec<_>>(),
+                    |record| record.sort_order,
+                    |record| record.id.clone(),
+                ),
+            );
+        }
+        orders
     }
-    for game in &snapshot.games {
-        let mut siblings = snapshot
+}
+
+fn ordered_ids<T>(
+    records: &[T],
+    order: impl Fn(&T) -> i64,
+    key: impl Fn(&T) -> String,
+) -> Vec<String> {
+    let mut records = records.iter().collect::<Vec<_>>();
+    records.sort_by_key(|record| order(record));
+    records.into_iter().map(key).collect()
+}
+
+fn reverse_order(
+    current: &[String],
+    fallback: Vec<String>,
+    before: &[String],
+    after: &[String],
+) -> Vec<String> {
+    let valid = fallback.iter().map(String::as_str).collect::<HashSet<_>>();
+    let after_ids = after.iter().map(String::as_str).collect::<HashSet<_>>();
+    let restored = before
+        .iter()
+        .filter(|id| !after_ids.contains(id.as_str()) && valid.contains(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if restored.is_empty() {
+        return fallback;
+    }
+
+    let mut result = current
+        .iter()
+        .filter(|id| valid.contains(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    for restored_id in restored {
+        let before_index = before.iter().position(|id| id == &restored_id).unwrap_or(0);
+        let successor = before[before_index + 1..]
+            .iter()
+            .find_map(|id| result.iter().position(|candidate| candidate == id));
+        if let Some(index) = successor {
+            result.insert(index, restored_id);
+            continue;
+        }
+        let predecessor = before[..before_index]
+            .iter()
+            .rev()
+            .find_map(|id| result.iter().position(|candidate| candidate == id));
+        result.insert(
+            predecessor.map_or(result.len(), |index| index + 1),
+            restored_id,
+        );
+    }
+    result
+}
+
+fn restore_snapshot_orders(
+    snapshot: &mut LibrarySnapshot,
+    before: &LibrarySnapshot,
+    after: &LibrarySnapshot,
+    current: &SnapshotOrders,
+) {
+    let before_orders = SnapshotOrders::from_snapshot(before);
+    let after_orders = SnapshotOrders::from_snapshot(after);
+    let fallback = ordered_ids(
+        &snapshot.games,
+        |record| record.sort_order,
+        |record| record.id.clone(),
+    );
+    let order = reverse_order(
+        &current.games,
+        fallback,
+        &before_orders.games,
+        &after_orders.games,
+    );
+    for record in &mut snapshot.games {
+        record.sort_order = order
+            .iter()
+            .position(|id| id == &record.id)
+            .unwrap_or(order.len()) as i64;
+    }
+
+    let game_ids = snapshot
+        .games
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<Vec<_>>();
+    for game_id in game_ids {
+        let fallback = ordered_ids(
+            &snapshot
+                .groups
+                .iter()
+                .filter(|record| record.game_id == game_id)
+                .collect::<Vec<_>>(),
+            |record| record.sort_order,
+            |record| record.id.clone(),
+        );
+        let order = reverse_order(
+            current.groups.get(&game_id).map_or(&[], Vec::as_slice),
+            fallback,
+            before_orders
+                .groups
+                .get(&game_id)
+                .map_or(&[], Vec::as_slice),
+            after_orders.groups.get(&game_id).map_or(&[], Vec::as_slice),
+        );
+        for record in snapshot
             .groups
             .iter_mut()
-            .filter(|record| record.game_id == game.id)
-            .collect::<Vec<_>>();
-        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
-        for (index, record) in siblings.into_iter().enumerate() {
-            record.sort_order = index as i64;
+            .filter(|record| record.game_id == game_id)
+        {
+            record.sort_order = order
+                .iter()
+                .position(|id| id == &record.id)
+                .unwrap_or(order.len()) as i64;
         }
+
         let group_ids = snapshot
             .groups
             .iter()
-            .filter(|record| record.game_id == game.id)
+            .filter(|record| record.game_id == game_id)
             .map(|record| record.id.as_str())
-            .collect::<Vec<_>>();
-        let mut favorites = snapshot
+            .collect::<HashSet<_>>();
+        let fallback = ordered_ids(
+            &snapshot
+                .phrases
+                .iter()
+                .filter(|record| record.favorite && group_ids.contains(record.group_id.as_str()))
+                .collect::<Vec<_>>(),
+            |record| record.favorite_order.unwrap_or(i64::MAX),
+            |record| record.id.clone(),
+        );
+        let order = reverse_order(
+            current.favorites.get(&game_id).map_or(&[], Vec::as_slice),
+            fallback,
+            before_orders
+                .favorites
+                .get(&game_id)
+                .map_or(&[], Vec::as_slice),
+            after_orders
+                .favorites
+                .get(&game_id)
+                .map_or(&[], Vec::as_slice),
+        );
+        for record in snapshot
             .phrases
             .iter_mut()
-            .filter(|record| record.favorite && group_ids.contains(&record.group_id.as_str()))
-            .collect::<Vec<_>>();
-        favorites
-            .sort_by_key(|record| (record.favorite_order.unwrap_or(i64::MAX), record.id.clone()));
-        for (index, record) in favorites.into_iter().enumerate() {
-            record.favorite_order = Some(index as i64);
+            .filter(|record| record.favorite && group_ids.contains(record.group_id.as_str()))
+        {
+            record.favorite_order = order
+                .iter()
+                .position(|id| id == &record.id)
+                .map(|index| index as i64);
         }
-    }
-    for group in &snapshot.groups {
-        let mut siblings = snapshot
-            .phrases
-            .iter_mut()
-            .filter(|record| record.group_id == group.id)
-            .collect::<Vec<_>>();
-        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
-        for (index, record) in siblings.into_iter().enumerate() {
-            record.sort_order = index as i64;
-        }
-    }
-    for game in &snapshot.games {
-        let mut siblings = snapshot
+
+        let fallback = ordered_ids(
+            &snapshot
+                .variable_definitions
+                .iter()
+                .filter(|record| record.game_id == game_id)
+                .collect::<Vec<_>>(),
+            |record| record.sort_order,
+            |record| record.id.clone(),
+        );
+        let order = reverse_order(
+            current.definitions.get(&game_id).map_or(&[], Vec::as_slice),
+            fallback,
+            before_orders
+                .definitions
+                .get(&game_id)
+                .map_or(&[], Vec::as_slice),
+            after_orders
+                .definitions
+                .get(&game_id)
+                .map_or(&[], Vec::as_slice),
+        );
+        for record in snapshot
             .variable_definitions
             .iter_mut()
-            .filter(|record| record.game_id == game.id)
-            .collect::<Vec<_>>();
-        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
-        for (index, record) in siblings.into_iter().enumerate() {
-            record.sort_order = index as i64;
+            .filter(|record| record.game_id == game_id)
+        {
+            record.sort_order = order
+                .iter()
+                .position(|id| id == &record.id)
+                .unwrap_or(order.len()) as i64;
         }
     }
-    for definition in &snapshot.variable_definitions {
-        let mut siblings = snapshot
+
+    let group_ids = snapshot
+        .groups
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<Vec<_>>();
+    for group_id in group_ids {
+        let fallback = ordered_ids(
+            &snapshot
+                .phrases
+                .iter()
+                .filter(|record| record.group_id == group_id)
+                .collect::<Vec<_>>(),
+            |record| record.sort_order,
+            |record| record.id.clone(),
+        );
+        let order = reverse_order(
+            current.phrases.get(&group_id).map_or(&[], Vec::as_slice),
+            fallback,
+            before_orders
+                .phrases
+                .get(&group_id)
+                .map_or(&[], Vec::as_slice),
+            after_orders
+                .phrases
+                .get(&group_id)
+                .map_or(&[], Vec::as_slice),
+        );
+        for record in snapshot
+            .phrases
+            .iter_mut()
+            .filter(|record| record.group_id == group_id)
+        {
+            record.sort_order = order
+                .iter()
+                .position(|id| id == &record.id)
+                .unwrap_or(order.len()) as i64;
+        }
+    }
+
+    let definition_ids = snapshot
+        .variable_definitions
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<Vec<_>>();
+    for definition_id in definition_ids {
+        let fallback = ordered_ids(
+            &snapshot
+                .variable_presets
+                .iter()
+                .filter(|record| record.variable_definition_id == definition_id)
+                .collect::<Vec<_>>(),
+            |record| record.sort_order,
+            |record| record.id.clone(),
+        );
+        let order = reverse_order(
+            current
+                .presets
+                .get(&definition_id)
+                .map_or(&[], Vec::as_slice),
+            fallback,
+            before_orders
+                .presets
+                .get(&definition_id)
+                .map_or(&[], Vec::as_slice),
+            after_orders
+                .presets
+                .get(&definition_id)
+                .map_or(&[], Vec::as_slice),
+        );
+        for record in snapshot
             .variable_presets
             .iter_mut()
-            .filter(|record| record.variable_definition_id == definition.id)
-            .collect::<Vec<_>>();
-        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
-        for (index, record) in siblings.into_iter().enumerate() {
-            record.sort_order = index as i64;
+            .filter(|record| record.variable_definition_id == definition_id)
+        {
+            record.sort_order = order
+                .iter()
+                .position(|id| id == &record.id)
+                .unwrap_or(order.len()) as i64;
         }
     }
 }
@@ -1487,7 +1781,14 @@ impl VariableService {
                 })
                 .count();
 
+            let remaining_ids = tx
+                .variable_definitions_for_game(&definition.game_id)?
+                .into_iter()
+                .filter(|candidate| candidate.id != definition_id)
+                .map(|candidate| candidate.id)
+                .collect::<Vec<_>>();
             tx.delete_variable_definition(definition_id)?;
+            tx.reorder_variable_definitions(&definition.game_id, &remaining_ids)?;
             Ok(DeleteImpact {
                 affected_phrase_count,
             })

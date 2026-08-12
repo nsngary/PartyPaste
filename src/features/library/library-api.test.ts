@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createLibraryApi } from "./library-api";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { createLibraryApi, type LibrarySnapshot } from "./library-api";
 
 describe("library command API", () => {
   it.each([
@@ -104,5 +104,15 @@ describe("library command API", () => {
     const api = createLibraryApi(invoke);
     await api.getLibrary();
     expect(invoke).toHaveBeenCalledWith("get_library", {});
+  });
+
+  it("types phrase mutations as complete snapshot responses", () => {
+    const api = createLibraryApi(vi.fn());
+    expectTypeOf(api.createPhrase).returns.resolves.toMatchTypeOf<{
+      value: LibrarySnapshot;
+    }>();
+    expectTypeOf(api.updatePhrase).returns.resolves.toMatchTypeOf<{
+      value: LibrarySnapshot;
+    }>();
   });
 });

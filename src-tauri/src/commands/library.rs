@@ -84,7 +84,7 @@ pub fn delete_group(
 pub fn create_phrase(
     state: State<'_, LibraryServiceState>,
     input: CreatePhraseInput,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state.lock()?.create_phrase(input).map_err(library_error)
 }
 
@@ -92,7 +92,7 @@ pub fn create_phrase(
 pub fn update_phrase(
     state: State<'_, LibraryServiceState>,
     input: UpdatePhraseInput,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state.lock()?.update_phrase(input).map_err(library_error)
 }
 

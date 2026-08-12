@@ -350,9 +350,20 @@ impl LibraryTx<'_> {
             .map(|game| game.id)
             .collect::<Vec<_>>();
         validate_complete_order(&stored_ids, ordered_ids)?;
-        let offset = ordered_ids.len() as i64;
-        self.connection
-            .execute("UPDATE games SET sort_order = sort_order + ?1", [offset])?;
+        let temporary_start: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM games",
+            [],
+            |row| row.get(0),
+        )?;
+        temporary_start
+            .checked_add(ordered_ids.len() as i64)
+            .ok_or(RepositoryError::SortOrderOverflow)?;
+        for (offset, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE games SET sort_order = ?1 WHERE id = ?2",
+                params![temporary_start + offset as i64, id],
+            )?;
+        }
         for (index, id) in ordered_ids.iter().enumerate() {
             self.connection.execute(
                 "UPDATE games SET sort_order = ?1 WHERE id = ?2",
@@ -373,11 +384,20 @@ impl LibraryTx<'_> {
             .map(|group| group.id)
             .collect::<Vec<_>>();
         validate_complete_order(&stored_ids, ordered_ids)?;
-        let offset = ordered_ids.len() as i64;
-        self.connection.execute(
-            "UPDATE groups SET sort_order = sort_order + ?1 WHERE game_id = ?2",
-            params![offset, game_id],
+        let temporary_start: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM groups WHERE game_id = ?1",
+            [game_id],
+            |row| row.get(0),
         )?;
+        temporary_start
+            .checked_add(ordered_ids.len() as i64)
+            .ok_or(RepositoryError::SortOrderOverflow)?;
+        for (offset, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE groups SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",
+                params![temporary_start + offset as i64, id, game_id],
+            )?;
+        }
         for (index, id) in ordered_ids.iter().enumerate() {
             self.connection.execute(
                 "UPDATE groups SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",
@@ -398,11 +418,20 @@ impl LibraryTx<'_> {
             .map(|definition| definition.id)
             .collect::<Vec<_>>();
         validate_complete_order(&stored_ids, ordered_ids)?;
-        let offset = ordered_ids.len() as i64;
-        self.connection.execute(
-            "UPDATE variable_definitions SET sort_order = sort_order + ?1 WHERE game_id = ?2",
-            params![offset, game_id],
+        let temporary_start: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM variable_definitions WHERE game_id = ?1",
+            [game_id],
+            |row| row.get(0),
         )?;
+        temporary_start
+            .checked_add(ordered_ids.len() as i64)
+            .ok_or(RepositoryError::SortOrderOverflow)?;
+        for (offset, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE variable_definitions SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",
+                params![temporary_start + offset as i64, id, game_id],
+            )?;
+        }
         for (index, id) in ordered_ids.iter().enumerate() {
             self.connection.execute(
                 "UPDATE variable_definitions SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",

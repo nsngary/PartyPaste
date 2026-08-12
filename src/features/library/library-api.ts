@@ -162,12 +162,12 @@ export function createLibraryApi(
         input,
       ),
     createPhrase: (input: CreatePhraseInput) =>
-      call<CreatePhraseInput, MutationResult<PhraseDto>>(
+      call<CreatePhraseInput, MutationResult<LibrarySnapshot>>(
         "create_phrase",
         input,
       ),
     updatePhrase: (input: UpdatePhraseInput) =>
-      call<UpdatePhraseInput, MutationResult<PhraseDto>>(
+      call<UpdatePhraseInput, MutationResult<LibrarySnapshot>>(
         "update_phrase",
         input,
       ),

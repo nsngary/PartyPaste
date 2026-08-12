@@ -5,7 +5,7 @@ use partypaste_lib::db::Repository;
 use partypaste_lib::services::library::{
     CreateGameInput, CreateGroupInput, CreatePhraseInput, LibraryService, LibraryServiceError,
     SaveVariableDefinition, SaveVariablePreset, UpdateGameInput, UpdateGroupInput,
-    UpdatePhraseInput, VariableService,
+    UpdatePhraseInput,
 };
 
 fn service_at(now: Arc<AtomicU64>) -> LibraryService {
@@ -240,9 +240,8 @@ fn destructive_impacts_count_children_and_delete_can_be_undone_for_ten_seconds()
     create_phrase(&mut service, "p1", "a", "P1", "Body", None);
     create_phrase(&mut service, "p2", "a", "P2", "Body", None);
     create_phrase(&mut service, "p3", "b", "P3", "Body", None);
-    VariableService::save_definition(
-        service.repository_mut(),
-        SaveVariableDefinition {
+    service
+        .save_variable_definition(SaveVariableDefinition {
             id: "variable".into(),
             game_id: "game".into(),
             name: "Count".into(),
@@ -253,9 +252,8 @@ fn destructive_impacts_count_children_and_delete_can_be_undone_for_ten_seconds()
                 value: "3".into(),
                 sort_order: 0,
             }],
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     service
         .update_phrase(UpdatePhraseInput {
             id: "p1".into(),
@@ -357,6 +355,259 @@ fn conflicted_undo_keeps_the_receipt_available_until_dependency_is_undone() {
 }
 
 #[test]
+fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
+    let now = Arc::new(AtomicU64::new(8_500));
+    let mut service = service_at(now);
+    for id in ["a", "b", "z"] {
+        create_game(&mut service, id, id);
+    }
+    let deleted_game = service.delete_game("b").unwrap();
+    create_game(&mut service, "c", "c");
+    let snapshot = service
+        .undo_operation(&deleted_game.undo.operation_id)
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .games
+            .iter()
+            .map(|game| (game.id.as_str(), game.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("a", 0), ("b", 1), ("z", 2), ("c", 3)]
+    );
+
+    for id in ["ga", "gb", "gz"] {
+        create_group(&mut service, id, "a", id);
+    }
+    create_phrase(&mut service, "restored-child", "gb", "child", "body", None);
+    let deleted_group = service.delete_group("gb").unwrap();
+    create_group(&mut service, "gc", "a", "gc");
+    let snapshot = service
+        .undo_operation(&deleted_group.undo.operation_id)
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .groups
+            .iter()
+            .filter(|group| group.game_id == "a")
+            .map(|group| (group.id.as_str(), group.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("ga", 0), ("gb", 1), ("gz", 2), ("gc", 3)]
+    );
+    assert!(
+        snapshot
+            .phrases
+            .iter()
+            .any(|phrase| phrase.id == "restored-child" && phrase.group_id == "gb")
+    );
+
+    for id in ["pa", "pb", "pz"] {
+        create_phrase(&mut service, id, "ga", id, "body", None);
+    }
+    let deleted_phrase = service.delete_phrase("pb").unwrap();
+    create_phrase(&mut service, "pc", "ga", "pc", "body", None);
+    let snapshot = service
+        .undo_operation(&deleted_phrase.undo.operation_id)
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .phrases
+            .iter()
+            .filter(|phrase| phrase.group_id == "ga")
+            .map(|phrase| (phrase.id.as_str(), phrase.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("pa", 0), ("pb", 1), ("pz", 2), ("pc", 3)]
+    );
+}
+
+#[test]
+fn undo_deleted_favorite_preserves_a_later_favorite_and_contiguous_order() {
+    let now = Arc::new(AtomicU64::new(8_750));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    for id in ["a", "b", "z", "c"] {
+        create_phrase(&mut service, id, "group", id, "body", None);
+    }
+    for id in ["a", "b", "z"] {
+        service.set_favorite(id, true).unwrap();
+    }
+    let deleted = service.delete_phrase("b").unwrap();
+    service.set_favorite("c", true).unwrap();
+
+    let snapshot = service.undo_operation(&deleted.undo.operation_id).unwrap();
+    assert_eq!(
+        snapshot
+            .phrases
+            .iter()
+            .filter(|phrase| phrase.favorite)
+            .map(|phrase| (phrase.id.as_str(), phrase.favorite_order))
+            .collect::<Vec<_>>(),
+        vec![
+            ("a", Some(0)),
+            ("b", Some(1)),
+            ("z", Some(2)),
+            ("c", Some(3))
+        ]
+    );
+}
+
+#[test]
+fn phrase_mutations_return_the_reference_set_in_the_complete_snapshot() {
+    let now = Arc::new(AtomicU64::new(8_900));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "count".into(),
+            game_id: "game".into(),
+            name: "Count".into(),
+            sort_order: 0,
+            rename_confirmed: false,
+            presets: vec![],
+        })
+        .unwrap();
+
+    let created = service
+        .create_phrase(CreatePhraseInput {
+            id: "phrase".into(),
+            group_id: "group".into(),
+            title: "Phrase".into(),
+            body_template: "Need {Count}".into(),
+            hotkey: None,
+        })
+        .unwrap();
+    assert_eq!(created.value.phrase_variable_refs.len(), 1);
+    assert_eq!(created.value.phrase_variable_refs[0].phrase_id, "phrase");
+
+    let updated = service
+        .update_phrase(UpdatePhraseInput {
+            id: "phrase".into(),
+            title: "Phrase".into(),
+            body_template: "No variable".into(),
+            hotkey: None,
+        })
+        .unwrap();
+    assert!(updated.value.phrase_variable_refs.is_empty());
+}
+
+#[test]
+fn undo_deleted_variable_definition_restores_definition_and_presets_at_their_anchors() {
+    let now = Arc::new(AtomicU64::new(8_950));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    for (id, name, presets) in [
+        ("a", "A", vec![("a1", "1"), ("a2", "2")]),
+        ("b", "B", vec![("b1", "1"), ("b2", "2")]),
+        ("z", "Z", vec![("z1", "1"), ("z2", "2")]),
+    ] {
+        service
+            .save_variable_definition(SaveVariableDefinition {
+                id: id.into(),
+                game_id: "game".into(),
+                name: name.into(),
+                sort_order: service.list_variable_definitions("game").unwrap().len() as i64,
+                rename_confirmed: false,
+                presets: presets
+                    .into_iter()
+                    .enumerate()
+                    .map(|(sort_order, (id, value))| SaveVariablePreset {
+                        id: id.into(),
+                        value: value.into(),
+                        sort_order: sort_order as i64,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+    }
+
+    let removed_preset = service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "b".into(),
+            game_id: "game".into(),
+            name: "B".into(),
+            sort_order: 1,
+            rename_confirmed: false,
+            presets: vec![SaveVariablePreset {
+                id: "b1".into(),
+                value: "1".into(),
+                sort_order: 0,
+            }],
+        })
+        .unwrap();
+    let removed_preset_operation = removed_preset.undo_receipt().unwrap().operation_id.clone();
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "b".into(),
+            game_id: "game".into(),
+            name: "B".into(),
+            sort_order: 1,
+            rename_confirmed: false,
+            presets: vec![
+                SaveVariablePreset {
+                    id: "b1".into(),
+                    value: "1".into(),
+                    sort_order: 0,
+                },
+                SaveVariablePreset {
+                    id: "b3".into(),
+                    value: "3".into(),
+                    sort_order: 1,
+                },
+            ],
+        })
+        .unwrap();
+    let snapshot = service.undo_operation(&removed_preset_operation).unwrap();
+    assert_eq!(
+        snapshot
+            .variable_presets
+            .iter()
+            .filter(|preset| preset.variable_definition_id == "b")
+            .map(|preset| (preset.id.as_str(), preset.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("b1", 0), ("b2", 1), ("b3", 2)]
+    );
+
+    let deleted = service.delete_variable_definition("b").unwrap();
+    service
+        .save_variable_definition(SaveVariableDefinition {
+            id: "c".into(),
+            game_id: "game".into(),
+            name: "C".into(),
+            sort_order: 2,
+            rename_confirmed: false,
+            presets: vec![SaveVariablePreset {
+                id: "c1".into(),
+                value: "1".into(),
+                sort_order: 0,
+            }],
+        })
+        .unwrap();
+
+    let snapshot = service.undo_operation(&deleted.undo.operation_id).unwrap();
+    assert_eq!(
+        snapshot
+            .variable_definitions
+            .iter()
+            .map(|definition| (definition.id.as_str(), definition.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("a", 0), ("b", 1), ("z", 2), ("c", 3)]
+    );
+    assert_eq!(
+        snapshot
+            .variable_presets
+            .iter()
+            .filter(|preset| preset.variable_definition_id == "b")
+            .map(|preset| (preset.id.as_str(), preset.sort_order))
+            .collect::<Vec<_>>(),
+        vec![("b1", 0), ("b2", 1), ("b3", 2)]
+    );
+    assert!(snapshot.variable_presets.iter().any(|preset| {
+        preset.id == "c1" && preset.variable_definition_id == "c" && preset.sort_order == 0
+    }));
+}
+
+#[test]
 fn deleting_a_group_reindexes_surviving_favorites_without_changing_group_order() {
     let now = Arc::new(AtomicU64::new(9_000));
     let mut service = service_at(now);
@@ -387,12 +638,11 @@ fn deleting_a_group_reindexes_surviving_favorites_without_changing_group_order()
     assert_eq!(
         deleted
             .value
-            .phrases
+            .groups
             .iter()
-            .filter(|phrase| phrase.group_id == "b")
-            .map(|phrase| phrase.sort_order)
+            .map(|group| (group.id.as_str(), group.sort_order))
             .collect::<Vec<_>>(),
-        vec![0, 1]
+        vec![("b", 0)]
     );
 }
 
@@ -440,18 +690,16 @@ fn variable_definition_order_is_part_of_the_complete_library_reorder_contract() 
     let mut service = service_at(now);
     create_game(&mut service, "game", "Game");
     for (id, name, sort_order) in [("v1", "One", 0), ("v2", "Two", 1)] {
-        VariableService::save_definition(
-            service.repository_mut(),
-            SaveVariableDefinition {
+        service
+            .save_variable_definition(SaveVariableDefinition {
                 id: id.into(),
                 game_id: "game".into(),
                 name: name.into(),
                 sort_order,
                 rename_confirmed: false,
                 presets: vec![],
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
     }
 
     service
