@@ -1,0 +1,62 @@
+{
+  "valid": [
+    {
+      "name": "unicode variable",
+      "source": "加入 {人數} 人",
+      "tokens": [
+        { "type": "text", "value": "加入 " },
+        { "type": "variable", "name": "人數" },
+        { "type": "text", "value": " 人" }
+      ]
+    },
+    {
+      "name": "escaped braces",
+      "source": "使用 {{人數}} 標籤",
+      "tokens": [{ "type": "text", "value": "使用 {人數} 標籤" }]
+    },
+    {
+      "name": "repeated variables",
+      "source": "{人數}/{人數}",
+      "tokens": [
+        { "type": "variable", "name": "人數" },
+        { "type": "text", "value": "/" },
+        { "type": "variable", "name": "人數" }
+      ]
+    },
+    {
+      "name": "unknown variable remains editable",
+      "source": "前往 {陌生欄位}",
+      "tokens": [
+        { "type": "text", "value": "前往 " },
+        { "type": "variable", "name": "陌生欄位" }
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unbalanced opening brace",
+      "source": "加入 {人數",
+      "issueCodes": ["unbalanced_open_brace"]
+    },
+    {
+      "name": "unbalanced closing brace",
+      "source": "加入 人數}",
+      "issueCodes": ["unbalanced_close_brace"]
+    },
+    {
+      "name": "empty variable name",
+      "source": "加入 {}",
+      "issueCodes": ["empty_name"]
+    },
+    {
+      "name": "nested variable",
+      "source": "加入 {外{內}}",
+      "issueCodes": ["nested_brace"]
+    },
+    {
+      "name": "control character in name",
+      "source": "加入 {人\n數}",
+      "issueCodes": ["control_character"]
+    }
+  ]
+}

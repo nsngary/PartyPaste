@@ -69,7 +69,19 @@ impl Repository {
     where
         F: FnOnce(&mut LibraryTx<'_>) -> Result<T, RepositoryError>,
     {
-        let transaction = self.connection.transaction()?;
+        self.transaction_with(operation)
+    }
+
+    pub fn transaction_with<T, E, F>(&mut self, operation: F) -> Result<T, E>
+    where
+        E: From<RepositoryError>,
+        F: FnOnce(&mut LibraryTx<'_>) -> Result<T, E>,
+    {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(RepositoryError::from)
+            .map_err(E::from)?;
         let result = {
             let mut library_tx = LibraryTx {
                 connection: &transaction,
@@ -79,11 +91,17 @@ impl Repository {
 
         match result {
             Ok(value) => {
-                transaction.commit()?;
+                transaction
+                    .commit()
+                    .map_err(RepositoryError::from)
+                    .map_err(E::from)?;
                 Ok(value)
             }
             Err(error) => {
-                transaction.rollback()?;
+                transaction
+                    .rollback()
+                    .map_err(RepositoryError::from)
+                    .map_err(E::from)?;
                 Err(error)
             }
         }
@@ -212,6 +230,185 @@ impl LibraryTx<'_> {
             self.connection.execute(
                 "UPDATE phrases SET sort_order = ?1 WHERE id = ?2 AND group_id = ?3",
                 params![sort_order as i64, phrase_id, group_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn variable_definition(
+        &self,
+        definition_id: &str,
+    ) -> Result<Option<VariableDefinitionRecord>, RepositoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, game_id, name, normalized_name, sort_order FROM variable_definitions WHERE id = ?1",
+        )?;
+        let mut rows = statement.query([definition_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(VariableDefinitionRecord {
+            id: row.get(0)?,
+            game_id: row.get(1)?,
+            name: row.get(2)?,
+            normalized_name: row.get(3)?,
+            sort_order: row.get(4)?,
+        }))
+    }
+
+    pub fn variable_definitions_for_game(
+        &self,
+        game_id: &str,
+    ) -> Result<Vec<VariableDefinitionRecord>, RepositoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, game_id, name, normalized_name, sort_order FROM variable_definitions WHERE game_id = ?1 ORDER BY sort_order, id",
+        )?;
+        Ok(statement
+            .query_map([game_id], |row| {
+                Ok(VariableDefinitionRecord {
+                    id: row.get(0)?,
+                    game_id: row.get(1)?,
+                    name: row.get(2)?,
+                    normalized_name: row.get(3)?,
+                    sort_order: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn phrases_for_game(&self, game_id: &str) -> Result<Vec<PhraseRecord>, RepositoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.id, p.group_id, p.title, p.body_template, p.favorite, p.favorite_order, p.hotkey, p.sort_order FROM phrases p INNER JOIN groups g ON g.id = p.group_id WHERE g.game_id = ?1 ORDER BY g.sort_order, p.sort_order, p.id",
+        )?;
+        Ok(statement
+            .query_map([game_id], |row| {
+                Ok(PhraseRecord {
+                    id: row.get(0)?,
+                    group_id: row.get(1)?,
+                    title: row.get(2)?,
+                    body_template: row.get(3)?,
+                    favorite: row.get(4)?,
+                    favorite_order: row.get(5)?,
+                    hotkey: row.get(6)?,
+                    sort_order: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn update_phrase_body(
+        &mut self,
+        phrase_id: &str,
+        body_template: &str,
+    ) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "UPDATE phrases SET body_template = ?1 WHERE id = ?2",
+            params![body_template, phrase_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_variable_definition(
+        &mut self,
+        record: &VariableDefinitionRecord,
+    ) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "UPDATE variable_definitions SET game_id = ?1, name = ?2, normalized_name = ?3, sort_order = ?4 WHERE id = ?5",
+            params![
+                record.game_id,
+                record.name,
+                record.normalized_name,
+                record.sort_order,
+                record.id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn replace_phrase_variable_refs(
+        &mut self,
+        phrase_id: &str,
+        references: &[PhraseVariableRefRecord],
+    ) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "DELETE FROM phrase_variable_refs WHERE phrase_id = ?1",
+            [phrase_id],
+        )?;
+        for reference in references {
+            self.insert_phrase_variable_ref(reference)?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_variable_presets(
+        &mut self,
+        definition_id: &str,
+        presets: &[VariablePresetRecord],
+    ) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "DELETE FROM variable_presets WHERE variable_definition_id = ?1",
+            [definition_id],
+        )?;
+        for preset in presets {
+            self.insert_variable_preset(preset)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_variable_definition(
+        &mut self,
+        definition_id: &str,
+    ) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "DELETE FROM variable_presets WHERE variable_definition_id = ?1",
+            [definition_id],
+        )?;
+        self.connection.execute(
+            "DELETE FROM phrase_variable_refs WHERE variable_definition_id = ?1",
+            [definition_id],
+        )?;
+        self.connection.execute(
+            "DELETE FROM variable_definitions WHERE id = ?1",
+            [definition_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn reorder_variable_presets(
+        &mut self,
+        definition_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepositoryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM variable_presets WHERE variable_definition_id = ?1")?;
+        let stored_ids = statement
+            .query_map([definition_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        drop(statement);
+        validate_complete_order(&stored_ids, ordered_ids)?;
+
+        let temporary_start: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM variable_presets WHERE variable_definition_id = ?1",
+            [definition_id],
+            |row| row.get(0),
+        )?;
+        let temporary_end = temporary_start
+            .checked_add(ordered_ids.len() as i64)
+            .ok_or(RepositoryError::SortOrderOverflow)?;
+        if temporary_end < temporary_start {
+            return Err(RepositoryError::SortOrderOverflow);
+        }
+
+        for (temporary_order, preset_id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE variable_presets SET sort_order = ?1 WHERE id = ?2 AND variable_definition_id = ?3",
+                params![temporary_start + temporary_order as i64, preset_id, definition_id],
+            )?;
+        }
+        for (sort_order, preset_id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE variable_presets SET sort_order = ?1 WHERE id = ?2 AND variable_definition_id = ?3",
+                params![sort_order as i64, preset_id, definition_id],
             )?;
         }
         Ok(())
