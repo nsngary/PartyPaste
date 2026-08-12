@@ -355,6 +355,45 @@ fn conflicted_undo_keeps_the_receipt_available_until_dependency_is_undone() {
 }
 
 #[test]
+fn phrase_update_body_conflict_is_atomic_and_keeps_the_receipt_for_retry() {
+    let now = Arc::new(AtomicU64::new(8_250));
+    let mut service = service_at(now);
+    create_game(&mut service, "game", "Game");
+    create_group(&mut service, "group", "game", "Group");
+    create_phrase(&mut service, "phrase", "group", "Original", "Body A", None);
+    let first = service
+        .update_phrase(UpdatePhraseInput {
+            id: "phrase".into(),
+            title: "First".into(),
+            body_template: "Body B".into(),
+            hotkey: Some("Ctrl+B".into()),
+        })
+        .unwrap();
+    let second = service
+        .update_phrase(UpdatePhraseInput {
+            id: "phrase".into(),
+            title: "First".into(),
+            body_template: "Body C".into(),
+            hotkey: Some("Ctrl+B".into()),
+        })
+        .unwrap();
+    let before_failed_undo = service.get_library().unwrap();
+
+    assert!(matches!(
+        service.undo_operation(&first.undo.operation_id),
+        Err(LibraryServiceError::UndoConflict)
+    ));
+    assert_eq!(service.get_library().unwrap(), before_failed_undo);
+
+    service.undo_operation(&second.undo.operation_id).unwrap();
+    let restored = service.undo_operation(&first.undo.operation_id).unwrap();
+    let phrase = &restored.phrases[0];
+    assert_eq!(phrase.title, "Original");
+    assert_eq!(phrase.body_template, "Body A");
+    assert_eq!(phrase.hotkey, None);
+}
+
+#[test]
 fn undo_deleted_records_restores_their_anchor_without_moving_later_creations() {
     let now = Arc::new(AtomicU64::new(8_500));
     let mut service = service_at(now);

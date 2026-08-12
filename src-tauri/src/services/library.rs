@@ -198,6 +198,7 @@ enum InverseOperation {
     ReverseChange {
         before: Box<LibrarySnapshot>,
         after: Box<LibrarySnapshot>,
+        preserve_later_phrase_bodies: HashSet<String>,
     },
 }
 
@@ -219,6 +220,16 @@ impl UndoJournal {
     }
 
     fn record(&mut self, before: LibrarySnapshot, after: LibrarySnapshot, now: u64) -> UndoReceipt {
+        self.record_with_body_policy(before, after, now, HashSet::new())
+    }
+
+    fn record_with_body_policy(
+        &mut self,
+        before: LibrarySnapshot,
+        after: LibrarySnapshot,
+        now: u64,
+        preserve_later_phrase_bodies: HashSet<String>,
+    ) -> UndoReceipt {
         while self.entries.len() >= UNDO_CAPACITY {
             self.entries.pop_front();
         }
@@ -233,6 +244,7 @@ impl UndoJournal {
             inverse: InverseOperation::ReverseChange {
                 before: Box::new(before),
                 after: Box::new(after),
+                preserve_later_phrase_bodies,
             },
         });
         UndoReceipt {
@@ -313,13 +325,34 @@ impl LibraryService {
         input: SaveVariableDefinition,
     ) -> Result<SaveVariableCommandResult, VariableServiceError> {
         let before = self.repository.snapshot()?;
+        let rename_confirmed = input.rename_confirmed;
         match VariableService::save_definition(&mut self.repository, input)? {
             SaveVariableResult::Saved {
                 definition: _,
                 presets: _,
             } => {
                 let after = self.repository.snapshot()?;
-                let undo = self.journal.record(before, after.clone(), (self.clock)());
+                let preserve_later_phrase_bodies = if rename_confirmed {
+                    before
+                        .phrases
+                        .iter()
+                        .filter(|before_phrase| {
+                            after.phrases.iter().any(|after_phrase| {
+                                after_phrase.id == before_phrase.id
+                                    && after_phrase.body_template != before_phrase.body_template
+                            })
+                        })
+                        .map(|phrase| phrase.id.clone())
+                        .collect()
+                } else {
+                    HashSet::new()
+                };
+                let undo = self.journal.record_with_body_policy(
+                    before,
+                    after.clone(),
+                    (self.clock)(),
+                    preserve_later_phrase_bodies,
+                );
                 Ok(SaveVariableCommandResult::Saved { value: after, undo })
             }
             SaveVariableResult::RenameConfirmationRequired {
@@ -1000,40 +1033,54 @@ fn reverse_change(
     mut current: LibrarySnapshot,
     inverse: InverseOperation,
 ) -> Result<LibrarySnapshot, LibraryServiceError> {
-    let InverseOperation::ReverseChange { before, after } = inverse;
+    let InverseOperation::ReverseChange {
+        before,
+        after,
+        preserve_later_phrase_bodies,
+    } = inverse;
+    let strict_bodies = HashSet::new();
     let current_orders = SnapshotOrders::from_snapshot(&current);
-    reverse_records(&mut current.games, &before.games, &after.games, |record| {
-        record.id.clone()
-    })?;
+    reverse_records(
+        &mut current.games,
+        &before.games,
+        &after.games,
+        |record| record.id.clone(),
+        &strict_bodies,
+    )?;
     reverse_records(
         &mut current.groups,
         &before.groups,
         &after.groups,
         |record| record.id.clone(),
+        &strict_bodies,
     )?;
     reverse_records(
         &mut current.phrases,
         &before.phrases,
         &after.phrases,
         |record| record.id.clone(),
+        &preserve_later_phrase_bodies,
     )?;
     reverse_records(
         &mut current.variable_definitions,
         &before.variable_definitions,
         &after.variable_definitions,
         |record| record.id.clone(),
+        &strict_bodies,
     )?;
     reverse_records(
         &mut current.variable_presets,
         &before.variable_presets,
         &after.variable_presets,
         |record| record.id.clone(),
+        &strict_bodies,
     )?;
     reverse_records(
         &mut current.settings,
         &before.settings,
         &after.settings,
         |record| record.key.clone(),
+        &strict_bodies,
     )?;
     restore_snapshot_orders(&mut current, &before, &after, &current_orders)?;
     rebuild_snapshot_phrase_references(&mut current)?;
@@ -1261,6 +1308,7 @@ fn reverse_records<T: Clone + Eq + Serialize + DeserializeOwned>(
     before: &[T],
     after: &[T],
     key: impl Fn(&T) -> String,
+    preserve_later_body_for: &HashSet<String>,
 ) -> Result<(), LibraryServiceError> {
     let before_by_id = before
         .iter()
@@ -1287,8 +1335,12 @@ fn reverse_records<T: Clone + Eq + Serialize + DeserializeOwned>(
             }
             (Some(before_record), None, None) => current.push((*before_record).clone()),
             (Some(before_record), Some(after_record), Some(index)) => {
-                current[index] =
-                    reverse_changed_fields(&current[index], before_record, after_record)?;
+                current[index] = reverse_changed_fields(
+                    &current[index],
+                    before_record,
+                    after_record,
+                    preserve_later_body_for.contains(&id),
+                )?;
             }
             _ => return Err(LibraryServiceError::UndoConflict),
         }
@@ -1316,6 +1368,7 @@ fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
     current: &T,
     before: &T,
     after: &T,
+    preserve_later_body: bool,
 ) -> Result<T, LibraryServiceError> {
     let mut current =
         serde_json::to_value(current).map_err(|_| LibraryServiceError::UndoConflict)?;
@@ -1335,7 +1388,7 @@ fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
         let after_value = after.get(field).ok_or(LibraryServiceError::UndoConflict)?;
         if before_value != after_value {
             if current.get(field) != Some(after_value) {
-                if field == "bodyTemplate" {
+                if field == "bodyTemplate" && preserve_later_body {
                     continue;
                 }
                 return Err(LibraryServiceError::UndoConflict);
