@@ -1,0 +1,77 @@
+import { describe, expect, it, vi } from "vitest";
+import { createLibraryApi } from "./library-api";
+
+describe("library command API", () => {
+  it.each([
+    ["getLibrary", "get_library", { gameId: "game" }],
+    ["createGame", "create_game", { input: { id: "g", name: "Game" } }],
+    ["updateGame", "update_game", { input: { id: "g", name: "Renamed" } }],
+    ["deleteGame", "delete_game", { gameId: "g" }],
+    [
+      "createGroup",
+      "create_group",
+      { input: { id: "r", gameId: "g", name: "Raid" } },
+    ],
+    [
+      "updateGroup",
+      "update_group",
+      { input: { id: "r", name: "Party", collapsed: true } },
+    ],
+    ["deleteGroup", "delete_group", { groupId: "r" }],
+    [
+      "createPhrase",
+      "create_phrase",
+      { input: { id: "p", groupId: "r", title: "T", bodyTemplate: "B" } },
+    ],
+    [
+      "updatePhrase",
+      "update_phrase",
+      { input: { id: "p", title: "T2", bodyTemplate: "B2", hotkey: null } },
+    ],
+    ["deletePhrase", "delete_phrase", { phraseId: "p" }],
+    [
+      "duplicatePhrase",
+      "duplicate_phrase",
+      { phraseId: "p", newPhraseId: "p2" },
+    ],
+    [
+      "movePhrase",
+      "move_phrase",
+      { phraseId: "p", targetGroupId: "r2", targetIndex: 0 },
+    ],
+    ["reorderGames", "reorder_games", { orderedIds: ["g2", "g"] }],
+    [
+      "reorderGroups",
+      "reorder_groups",
+      { gameId: "g", orderedIds: ["r2", "r"] },
+    ],
+    [
+      "reorderPhrases",
+      "reorder_phrases",
+      { groupId: "r", orderedIds: ["p2", "p"] },
+    ],
+    [
+      "reorderFavorites",
+      "reorder_favorites",
+      { gameId: "g", orderedIds: ["p2", "p"] },
+    ],
+    [
+      "reorderVariableDefinitions",
+      "reorder_variable_definitions",
+      { gameId: "g", orderedIds: ["v2", "v1"] },
+    ],
+    ["setFavorite", "set_favorite", { phraseId: "p", favorite: true }],
+    ["searchPhrases", "search_phrases", { gameId: "g", query: "raid" }],
+    ["undoOperation", "undo_operation", { operationId: "op" }],
+    ["getGameDeleteImpact", "get_game_delete_impact", { gameId: "g" }],
+    ["getGroupDeleteImpact", "get_group_delete_impact", { groupId: "r" }],
+  ] as const)(
+    "%s invokes %s with typed input",
+    async (method, command, input) => {
+      const invoke = vi.fn().mockResolvedValue({ ok: true });
+      const api = createLibraryApi(invoke);
+      await (api[method] as (input: never) => Promise<unknown>)(input as never);
+      expect(invoke).toHaveBeenCalledWith(command, input);
+    },
+  );
+});

@@ -1,14 +1,886 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use unicode_casefold::UnicodeCaseFold;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::db::models::{PhraseVariableRefRecord, VariableDefinitionRecord, VariablePresetRecord};
+use crate::db::models::{
+    GameRecord, GroupRecord, LibrarySnapshot, OverlayDisplayMode, PhraseRecord,
+    PhraseVariableRefRecord, VariableDefinitionRecord, VariablePresetRecord,
+};
 use crate::db::{LibraryTx, Repository, RepositoryError};
 
 use super::templates::{TemplateService, TemplateToken};
+
+const UNDO_VALIDITY_MS: u64 = 10_000;
+const UNDO_CAPACITY: usize = 32;
+static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn validate_library_text(value: &str, maximum: usize) -> Option<String> {
+    let normalized = value.trim().nfkc().collect::<String>();
+    let length = normalized.chars().count();
+    (length > 0 && length <= maximum).then_some(normalized)
+}
+
+fn validate_phrase_body(value: &str) -> Option<String> {
+    let normalized = value.nfkc().collect::<String>();
+    (!normalized.trim().is_empty() && normalized.chars().count() <= 4000).then_some(normalized)
+}
+
+fn normalize_hotkey(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let normalized = value.trim().nfkc().collect::<String>();
+        (!normalized.is_empty()).then_some(normalized)
+    })
+}
+
+fn normalize_search(value: &str) -> String {
+    value.trim().nfkc().case_fold().collect()
+}
+
+fn map_repository_error(error: RepositoryError) -> LibraryServiceError {
+    match error {
+        RepositoryError::InvalidSiblingOrder | RepositoryError::SortOrderOverflow => {
+            LibraryServiceError::InvalidOrder
+        }
+        other => LibraryServiceError::Repository(other),
+    }
+}
+
+fn refresh_phrase_references(
+    tx: &mut LibraryTx<'_>,
+    phrase: &PhraseRecord,
+) -> Result<(), LibraryServiceError> {
+    let group = tx
+        .group(&phrase.group_id)?
+        .ok_or(LibraryServiceError::NotFound)?;
+    let definitions = tx.variable_definitions_for_game(&group.game_id)?;
+    let by_name = definitions
+        .iter()
+        .map(|definition| (definition.normalized_name.as_str(), definition.id.as_str()))
+        .collect::<HashMap<_, _>>();
+    let scan = TemplateService::scan(&phrase.body_template);
+    if !scan.issues.is_empty() {
+        return Err(LibraryServiceError::InvalidPhraseBody);
+    }
+    let references = scan
+        .tokens
+        .iter()
+        .filter_map(|token| match token {
+            TemplateToken::Variable { name } => Some(name),
+            TemplateToken::Text { .. } => None,
+        })
+        .enumerate()
+        .filter_map(|(order, name)| {
+            by_name
+                .get(normalize_search(name).as_str())
+                .map(|definition_id| PhraseVariableRefRecord {
+                    phrase_id: phrase.id.clone(),
+                    variable_definition_id: (*definition_id).to_owned(),
+                    token_order: order as i64,
+                })
+        })
+        .collect::<Vec<_>>();
+    tx.replace_phrase_variable_refs(&phrase.id, &references)?;
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum LibraryServiceError {
+    #[error("game name is invalid")]
+    InvalidGameName,
+    #[error("group name is invalid")]
+    InvalidGroupName,
+    #[error("phrase title is invalid")]
+    InvalidPhraseTitle,
+    #[error("phrase body is invalid")]
+    InvalidPhraseBody,
+    #[error("library record was not found")]
+    NotFound,
+    #[error("library order is invalid")]
+    InvalidOrder,
+    #[error("undo operation expired")]
+    UndoExpired,
+    #[error("undo operation was not found")]
+    UndoNotFound,
+    #[error(transparent)]
+    Repository(#[from] RepositoryError),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGameInput {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGameInput {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupInput {
+    pub id: String,
+    pub game_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupInput {
+    pub id: String,
+    pub name: String,
+    pub collapsed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePhraseInput {
+    pub id: String,
+    pub group_id: String,
+    pub title: String,
+    pub body_template: String,
+    pub hotkey: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePhraseInput {
+    pub id: String,
+    pub title: String,
+    pub body_template: String,
+    pub hotkey: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoReceipt {
+    pub operation_id: String,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MutationResult<T> {
+    pub value: T,
+    pub undo: UndoReceipt,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupDeleteImpact {
+    pub phrase_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDeleteImpact {
+    pub group_count: usize,
+    pub phrase_count: usize,
+    pub variable_definition_count: usize,
+}
+
+enum InverseOperation {
+    RestoreLibrary(Box<LibrarySnapshot>),
+}
+
+struct JournalEntry {
+    operation_id: String,
+    expires_at: u64,
+    inverse: InverseOperation,
+}
+
+struct UndoJournal {
+    entries: VecDeque<JournalEntry>,
+}
+
+impl UndoJournal {
+    fn new() -> Self {
+        Self {
+            entries: VecDeque::with_capacity(UNDO_CAPACITY),
+        }
+    }
+
+    fn record(&mut self, snapshot: LibrarySnapshot, now: u64) -> UndoReceipt {
+        while self.entries.len() >= UNDO_CAPACITY {
+            self.entries.pop_front();
+        }
+        let operation_id = format!(
+            "undo-{}",
+            OPERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let expires_at = now.saturating_add(UNDO_VALIDITY_MS);
+        self.entries.push_back(JournalEntry {
+            operation_id: operation_id.clone(),
+            expires_at,
+            inverse: InverseOperation::RestoreLibrary(Box::new(snapshot)),
+        });
+        UndoReceipt {
+            operation_id,
+            expires_at,
+        }
+    }
+
+    fn take(
+        &mut self,
+        operation_id: &str,
+        now: u64,
+    ) -> Result<InverseOperation, LibraryServiceError> {
+        let Some(entry) = self.entries.back() else {
+            return Err(LibraryServiceError::UndoNotFound);
+        };
+        if entry.operation_id != operation_id {
+            return Err(LibraryServiceError::UndoNotFound);
+        }
+        let entry = self
+            .entries
+            .pop_back()
+            .expect("latest journal entry exists");
+        if now >= entry.expires_at {
+            return Err(LibraryServiceError::UndoExpired);
+        }
+        Ok(entry.inverse)
+    }
+}
+
+pub struct LibraryService {
+    repository: Repository,
+    journal: UndoJournal,
+    clock: Box<dyn Fn() -> u64 + Send + Sync>,
+}
+
+impl LibraryService {
+    pub fn new(repository: Repository) -> Self {
+        Self::with_clock(repository, || {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_millis() as u64)
+        })
+    }
+
+    pub fn with_clock(
+        repository: Repository,
+        clock: impl Fn() -> u64 + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            repository,
+            journal: UndoJournal::new(),
+            clock: Box::new(clock),
+        }
+    }
+
+    pub fn repository(&self) -> &Repository {
+        &self.repository
+    }
+
+    pub fn repository_mut(&mut self) -> &mut Repository {
+        &mut self.repository
+    }
+
+    pub fn get_library(&self) -> Result<LibrarySnapshot, LibraryServiceError> {
+        Ok(self.repository.snapshot()?)
+    }
+
+    fn mutate<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Repository) -> Result<T, LibraryServiceError>,
+    ) -> Result<MutationResult<T>, LibraryServiceError> {
+        let before = self.repository.snapshot()?;
+        let value = operation(&mut self.repository)?;
+        let undo = self.journal.record(before, (self.clock)());
+        Ok(MutationResult { value, undo })
+    }
+
+    pub fn create_game(
+        &mut self,
+        input: CreateGameInput,
+    ) -> Result<MutationResult<GameRecord>, LibraryServiceError> {
+        let name =
+            validate_library_text(&input.name, 80).ok_or(LibraryServiceError::InvalidGameName)?;
+        if input.id.is_empty() {
+            return Err(LibraryServiceError::InvalidGameName);
+        }
+        self.mutate(|repository| {
+            let sort_order = repository.snapshot()?.games.len() as i64;
+            let record = GameRecord {
+                id: input.id,
+                name,
+                sort_order,
+                overlay_display_mode: OverlayDisplayMode::Title,
+            };
+            repository.transaction(|tx| tx.insert_game(&record))?;
+            Ok(record)
+        })
+    }
+
+    pub fn update_game(
+        &mut self,
+        input: UpdateGameInput,
+    ) -> Result<MutationResult<GameRecord>, LibraryServiceError> {
+        let name =
+            validate_library_text(&input.name, 80).ok_or(LibraryServiceError::InvalidGameName)?;
+        self.mutate(|repository| {
+            let mut record = repository
+                .snapshot()?
+                .games
+                .into_iter()
+                .find(|game| game.id == input.id)
+                .ok_or(LibraryServiceError::NotFound)?;
+            record.name = name;
+            repository.transaction(|tx| tx.update_game(&record))?;
+            Ok(record)
+        })
+    }
+
+    pub fn create_group(
+        &mut self,
+        input: CreateGroupInput,
+    ) -> Result<MutationResult<GroupRecord>, LibraryServiceError> {
+        let name =
+            validate_library_text(&input.name, 80).ok_or(LibraryServiceError::InvalidGroupName)?;
+        if input.id.is_empty() {
+            return Err(LibraryServiceError::InvalidGroupName);
+        }
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            if !snapshot.games.iter().any(|game| game.id == input.game_id) {
+                return Err(LibraryServiceError::NotFound);
+            }
+            let sort_order = snapshot
+                .groups
+                .iter()
+                .filter(|group| group.game_id == input.game_id)
+                .count() as i64;
+            let record = GroupRecord {
+                id: input.id,
+                game_id: input.game_id,
+                name,
+                collapsed: false,
+                sort_order,
+            };
+            repository.transaction(|tx| tx.insert_group(&record))?;
+            Ok(record)
+        })
+    }
+
+    pub fn update_group(
+        &mut self,
+        input: UpdateGroupInput,
+    ) -> Result<MutationResult<GroupRecord>, LibraryServiceError> {
+        let name =
+            validate_library_text(&input.name, 80).ok_or(LibraryServiceError::InvalidGroupName)?;
+        self.mutate(|repository| {
+            let mut record = repository
+                .snapshot()?
+                .groups
+                .into_iter()
+                .find(|group| group.id == input.id)
+                .ok_or(LibraryServiceError::NotFound)?;
+            record.name = name;
+            record.collapsed = input.collapsed;
+            repository.transaction(|tx| tx.update_group(&record))?;
+            Ok(record)
+        })
+    }
+
+    pub fn create_phrase(
+        &mut self,
+        input: CreatePhraseInput,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        let title = validate_library_text(&input.title, 120)
+            .ok_or(LibraryServiceError::InvalidPhraseTitle)?;
+        let body_template = validate_phrase_body(&input.body_template)
+            .ok_or(LibraryServiceError::InvalidPhraseBody)?;
+        let hotkey = normalize_hotkey(input.hotkey);
+        if input.id.is_empty() {
+            return Err(LibraryServiceError::InvalidPhraseTitle);
+        }
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let group = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == input.group_id)
+                .ok_or(LibraryServiceError::NotFound)?;
+            let sort_order = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.group_id == input.group_id)
+                .count() as i64;
+            let record = PhraseRecord {
+                id: input.id,
+                group_id: group.id.clone(),
+                title,
+                body_template,
+                favorite: false,
+                favorite_order: None,
+                hotkey,
+                sort_order,
+            };
+            repository.transaction_with(|tx| {
+                tx.insert_phrase(&record)?;
+                refresh_phrase_references(tx, &record)?;
+                Ok::<_, LibraryServiceError>(())
+            })?;
+            Ok(record)
+        })
+    }
+
+    pub fn update_phrase(
+        &mut self,
+        input: UpdatePhraseInput,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        let title = validate_library_text(&input.title, 120)
+            .ok_or(LibraryServiceError::InvalidPhraseTitle)?;
+        let body_template = validate_phrase_body(&input.body_template)
+            .ok_or(LibraryServiceError::InvalidPhraseBody)?;
+        let hotkey = normalize_hotkey(input.hotkey);
+        self.mutate(|repository| {
+            let mut record = repository
+                .snapshot()?
+                .phrases
+                .into_iter()
+                .find(|phrase| phrase.id == input.id)
+                .ok_or(LibraryServiceError::NotFound)?;
+            record.title = title;
+            record.body_template = body_template;
+            record.hotkey = hotkey;
+            repository.transaction_with(|tx| {
+                tx.update_phrase(&record)?;
+                refresh_phrase_references(tx, &record)?;
+                Ok::<_, LibraryServiceError>(())
+            })?;
+            Ok(record)
+        })
+    }
+
+    pub fn game_delete_impact(
+        &self,
+        game_id: &str,
+    ) -> Result<GameDeleteImpact, LibraryServiceError> {
+        let snapshot = self.repository.snapshot()?;
+        if !snapshot.games.iter().any(|game| game.id == game_id) {
+            return Err(LibraryServiceError::NotFound);
+        }
+        let group_ids = snapshot
+            .groups
+            .iter()
+            .filter(|group| group.game_id == game_id)
+            .map(|group| group.id.as_str())
+            .collect::<Vec<_>>();
+        Ok(GameDeleteImpact {
+            group_count: group_ids.len(),
+            phrase_count: snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| group_ids.contains(&phrase.group_id.as_str()))
+                .count(),
+            variable_definition_count: snapshot
+                .variable_definitions
+                .iter()
+                .filter(|definition| definition.game_id == game_id)
+                .count(),
+        })
+    }
+
+    pub fn group_delete_impact(
+        &self,
+        group_id: &str,
+    ) -> Result<GroupDeleteImpact, LibraryServiceError> {
+        let snapshot = self.repository.snapshot()?;
+        if !snapshot.groups.iter().any(|group| group.id == group_id) {
+            return Err(LibraryServiceError::NotFound);
+        }
+        Ok(GroupDeleteImpact {
+            phrase_count: snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.group_id == group_id)
+                .count(),
+        })
+    }
+
+    pub fn delete_game(
+        &mut self,
+        game_id: &str,
+    ) -> Result<MutationResult<GameDeleteImpact>, LibraryServiceError> {
+        let impact = self.game_delete_impact(game_id)?;
+        let game_id = game_id.to_owned();
+        self.mutate(|repository| {
+            let remaining = repository
+                .snapshot()?
+                .games
+                .into_iter()
+                .filter(|game| game.id != game_id)
+                .map(|game| game.id)
+                .collect::<Vec<_>>();
+            repository.transaction_with(|tx| {
+                tx.delete_game_with_children(&game_id)?;
+                tx.reorder_games(&remaining).map_err(map_repository_error)
+            })?;
+            Ok(impact)
+        })
+    }
+
+    pub fn delete_group(
+        &mut self,
+        group_id: &str,
+    ) -> Result<MutationResult<GroupDeleteImpact>, LibraryServiceError> {
+        let impact = self.group_delete_impact(group_id)?;
+        let group_id = group_id.to_owned();
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let game_id = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .map(|group| group.game_id.clone())
+                .ok_or(LibraryServiceError::NotFound)?;
+            let remaining = snapshot
+                .groups
+                .into_iter()
+                .filter(|group| group.game_id == game_id && group.id != group_id)
+                .map(|group| group.id)
+                .collect::<Vec<_>>();
+            repository.transaction_with(|tx| {
+                tx.delete_group_with_children(&group_id)?;
+                tx.reorder_groups(&game_id, &remaining)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(impact)
+        })
+    }
+
+    pub fn delete_phrase(
+        &mut self,
+        phrase_id: &str,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        let phrase_id = phrase_id.to_owned();
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let record = snapshot
+                .phrases
+                .iter()
+                .find(|phrase| phrase.id == phrase_id)
+                .cloned()
+                .ok_or(LibraryServiceError::NotFound)?;
+            let group_ids = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.group_id == record.group_id && phrase.id != phrase_id)
+                .map(|phrase| phrase.id.clone())
+                .collect::<Vec<_>>();
+            let game_id = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == record.group_id)
+                .map(|group| group.game_id.clone())
+                .ok_or(LibraryServiceError::NotFound)?;
+            let mut favorite_ids = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.favorite && phrase.id != phrase_id)
+                .filter(|phrase| {
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.id == phrase.group_id && group.game_id == game_id)
+                })
+                .map(|phrase| phrase.id.clone())
+                .collect::<Vec<_>>();
+            favorite_ids.sort_by_key(|id| {
+                snapshot
+                    .phrases
+                    .iter()
+                    .find(|phrase| &phrase.id == id)
+                    .and_then(|phrase| phrase.favorite_order)
+            });
+            repository.transaction_with(|tx| {
+                tx.delete_phrase(&phrase_id)?;
+                tx.reorder_phrases(&record.group_id, &group_ids)?;
+                tx.reorder_favorites(&game_id, &favorite_ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(record)
+        })
+    }
+
+    pub fn duplicate_phrase(
+        &mut self,
+        phrase_id: &str,
+        new_phrase_id: &str,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        if new_phrase_id.is_empty() {
+            return Err(LibraryServiceError::InvalidPhraseTitle);
+        }
+        let phrase_id = phrase_id.to_owned();
+        let new_phrase_id = new_phrase_id.to_owned();
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let source = snapshot
+                .phrases
+                .iter()
+                .find(|phrase| phrase.id == phrase_id)
+                .cloned()
+                .ok_or(LibraryServiceError::NotFound)?;
+            let mut sibling_ids = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.group_id == source.group_id)
+                .map(|phrase| phrase.id.clone())
+                .collect::<Vec<_>>();
+            let insert_at = sibling_ids
+                .iter()
+                .position(|id| id == &phrase_id)
+                .ok_or(LibraryServiceError::NotFound)?
+                + 1;
+            let mut duplicate = source.clone();
+            duplicate.id = new_phrase_id.clone();
+            duplicate.favorite = false;
+            duplicate.favorite_order = None;
+            duplicate.hotkey = None;
+            duplicate.sort_order = sibling_ids.len() as i64;
+            sibling_ids.insert(insert_at, new_phrase_id);
+            repository.transaction_with(|tx| {
+                tx.insert_phrase(&duplicate)?;
+                refresh_phrase_references(tx, &duplicate)?;
+                tx.reorder_phrases(&duplicate.group_id, &sibling_ids)
+                    .map_err(map_repository_error)
+            })?;
+            duplicate.sort_order = insert_at as i64;
+            Ok(duplicate)
+        })
+    }
+
+    pub fn move_phrase(
+        &mut self,
+        phrase_id: &str,
+        target_group_id: &str,
+        target_index: usize,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        let phrase_id = phrase_id.to_owned();
+        let target_group_id = target_group_id.to_owned();
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let source = snapshot
+                .phrases
+                .iter()
+                .find(|phrase| phrase.id == phrase_id)
+                .ok_or(LibraryServiceError::NotFound)?;
+            let source_game = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == source.group_id)
+                .map(|group| group.game_id.as_str())
+                .ok_or(LibraryServiceError::NotFound)?;
+            let target_game = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == target_group_id)
+                .map(|group| group.game_id.as_str())
+                .ok_or(LibraryServiceError::NotFound)?;
+            if source_game != target_game {
+                return Err(LibraryServiceError::InvalidOrder);
+            }
+            repository.transaction_with(|tx| {
+                tx.move_phrase(&phrase_id, &target_group_id, target_index)
+                    .map_err(map_repository_error)
+            })?;
+            repository
+                .snapshot()?
+                .phrases
+                .into_iter()
+                .find(|phrase| phrase.id == phrase_id)
+                .ok_or(LibraryServiceError::NotFound)
+        })
+    }
+
+    pub fn reorder_games(
+        &mut self,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        let ids = ordered_ids.to_vec();
+        self.mutate(|repository| {
+            repository
+                .transaction_with(|tx| tx.reorder_games(&ids).map_err(map_repository_error))?;
+            Ok(repository.snapshot()?)
+        })
+    }
+
+    pub fn reorder_groups(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        let game_id = game_id.to_owned();
+        let ids = ordered_ids.to_vec();
+        self.mutate(|repository| {
+            repository.transaction_with(|tx| {
+                tx.reorder_groups(&game_id, &ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(repository.snapshot()?)
+        })
+    }
+
+    pub fn reorder_phrases(
+        &mut self,
+        group_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        let group_id = group_id.to_owned();
+        let ids = ordered_ids.to_vec();
+        self.mutate(|repository| {
+            repository.transaction_with(|tx| {
+                tx.reorder_phrases(&group_id, &ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(repository.snapshot()?)
+        })
+    }
+
+    pub fn reorder_favorites(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        let game_id = game_id.to_owned();
+        let ids = ordered_ids.to_vec();
+        self.mutate(|repository| {
+            repository.transaction_with(|tx| {
+                tx.reorder_favorites(&game_id, &ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(repository.snapshot()?)
+        })
+    }
+
+    pub fn reorder_variable_definitions(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        let game_id = game_id.to_owned();
+        let ids = ordered_ids.to_vec();
+        self.mutate(|repository| {
+            repository.transaction_with(|tx| {
+                tx.reorder_variable_definitions(&game_id, &ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(repository.snapshot()?)
+        })
+    }
+
+    pub fn set_favorite(
+        &mut self,
+        phrase_id: &str,
+        favorite: bool,
+    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+        let phrase_id = phrase_id.to_owned();
+        self.mutate(|repository| {
+            let snapshot = repository.snapshot()?;
+            let mut record = snapshot
+                .phrases
+                .iter()
+                .find(|phrase| phrase.id == phrase_id)
+                .cloned()
+                .ok_or(LibraryServiceError::NotFound)?;
+            let game_id = snapshot
+                .groups
+                .iter()
+                .find(|group| group.id == record.group_id)
+                .map(|group| group.game_id.clone())
+                .ok_or(LibraryServiceError::NotFound)?;
+            let mut ids = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.favorite)
+                .filter(|phrase| {
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.id == phrase.group_id && group.game_id == game_id)
+                })
+                .map(|phrase| phrase.id.clone())
+                .collect::<Vec<_>>();
+            ids.sort_by_key(|id| {
+                snapshot
+                    .phrases
+                    .iter()
+                    .find(|phrase| &phrase.id == id)
+                    .and_then(|phrase| phrase.favorite_order)
+            });
+            if favorite {
+                if !record.favorite {
+                    ids.push(record.id.clone());
+                }
+                record.favorite = true;
+                record.favorite_order = ids
+                    .iter()
+                    .position(|id| id == &record.id)
+                    .map(|index| index as i64);
+            } else {
+                ids.retain(|id| id != &record.id);
+                record.favorite = false;
+                record.favorite_order = None;
+            }
+            repository.transaction_with(|tx| {
+                tx.update_phrase(&record)?;
+                tx.reorder_favorites(&game_id, &ids)
+                    .map_err(map_repository_error)
+            })?;
+            Ok(record)
+        })
+    }
+
+    pub fn search_phrases(
+        &self,
+        game_id: &str,
+        query: &str,
+    ) -> Result<Vec<PhraseRecord>, LibraryServiceError> {
+        let needle = normalize_search(query);
+        let snapshot = self.repository.snapshot()?;
+        let group_ids = snapshot
+            .groups
+            .iter()
+            .filter(|group| group.game_id == game_id)
+            .map(|group| group.id.as_str())
+            .collect::<Vec<_>>();
+        Ok(snapshot
+            .phrases
+            .into_iter()
+            .filter(|phrase| group_ids.contains(&phrase.group_id.as_str()))
+            .filter(|phrase| {
+                needle.is_empty()
+                    || normalize_search(&phrase.title).contains(&needle)
+                    || normalize_search(&phrase.body_template).contains(&needle)
+                    || phrase
+                        .hotkey
+                        .as_deref()
+                        .is_some_and(|hotkey| normalize_search(hotkey).contains(&needle))
+            })
+            .collect())
+    }
+
+    pub fn undo_operation(
+        &mut self,
+        operation_id: &str,
+    ) -> Result<LibrarySnapshot, LibraryServiceError> {
+        match self.journal.take(operation_id, (self.clock)())? {
+            InverseOperation::RestoreLibrary(snapshot) => {
+                self.repository.replace_snapshot(&snapshot)?
+            }
+        }
+        Ok(self.repository.snapshot()?)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum VariableServiceError {

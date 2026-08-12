@@ -65,6 +65,10 @@ impl Repository {
         })
     }
 
+    pub fn replace_snapshot(&mut self, snapshot: &LibrarySnapshot) -> Result<(), RepositoryError> {
+        self.transaction(|tx| tx.replace_snapshot(snapshot))
+    }
+
     pub fn transaction<T, F>(&mut self, operation: F) -> Result<T, RepositoryError>
     where
         F: FnOnce(&mut LibraryTx<'_>) -> Result<T, RepositoryError>,
@@ -109,6 +113,41 @@ impl Repository {
 }
 
 impl LibraryTx<'_> {
+    pub fn replace_snapshot(&mut self, snapshot: &LibrarySnapshot) -> Result<(), RepositoryError> {
+        self.connection
+            .execute("DELETE FROM phrase_variable_refs", [])?;
+        self.connection
+            .execute("DELETE FROM variable_presets", [])?;
+        self.connection
+            .execute("DELETE FROM variable_definitions", [])?;
+        self.connection.execute("DELETE FROM phrases", [])?;
+        self.connection.execute("DELETE FROM groups", [])?;
+        self.connection.execute("DELETE FROM games", [])?;
+        self.connection.execute("DELETE FROM settings", [])?;
+        for record in &snapshot.games {
+            self.insert_game(record)?;
+        }
+        for record in &snapshot.groups {
+            self.insert_group(record)?;
+        }
+        for record in &snapshot.phrases {
+            self.insert_phrase(record)?;
+        }
+        for record in &snapshot.variable_definitions {
+            self.insert_variable_definition(record)?;
+        }
+        for record in &snapshot.variable_presets {
+            self.insert_variable_preset(record)?;
+        }
+        for record in &snapshot.phrase_variable_refs {
+            self.insert_phrase_variable_ref(record)?;
+        }
+        for record in &snapshot.settings {
+            self.upsert_setting(record)?;
+        }
+        Ok(())
+    }
+
     pub fn insert_game(&mut self, record: &GameRecord) -> Result<(), RepositoryError> {
         self.connection.execute(
             "INSERT INTO games (id, name, sort_order, overlay_display_mode) VALUES (?1, ?2, ?3, ?4)",
@@ -191,6 +230,260 @@ impl LibraryTx<'_> {
     pub fn delete_game(&mut self, game_id: &str) -> Result<(), RepositoryError> {
         self.connection
             .execute("DELETE FROM games WHERE id = ?1", [game_id])?;
+        Ok(())
+    }
+
+    pub fn delete_game_with_children(&mut self, game_id: &str) -> Result<(), RepositoryError> {
+        self.connection.execute("DELETE FROM phrase_variable_refs WHERE phrase_id IN (SELECT p.id FROM phrases p JOIN groups g ON g.id = p.group_id WHERE g.game_id = ?1)", [game_id])?;
+        self.connection.execute("DELETE FROM variable_presets WHERE variable_definition_id IN (SELECT id FROM variable_definitions WHERE game_id = ?1)", [game_id])?;
+        self.connection.execute(
+            "DELETE FROM variable_definitions WHERE game_id = ?1",
+            [game_id],
+        )?;
+        self.connection.execute(
+            "DELETE FROM phrases WHERE group_id IN (SELECT id FROM groups WHERE game_id = ?1)",
+            [game_id],
+        )?;
+        self.connection
+            .execute("DELETE FROM groups WHERE game_id = ?1", [game_id])?;
+        self.connection
+            .execute("DELETE FROM games WHERE id = ?1", [game_id])?;
+        Ok(())
+    }
+
+    pub fn delete_group_with_children(&mut self, group_id: &str) -> Result<(), RepositoryError> {
+        self.connection.execute("DELETE FROM phrase_variable_refs WHERE phrase_id IN (SELECT id FROM phrases WHERE group_id = ?1)", [group_id])?;
+        self.connection
+            .execute("DELETE FROM phrases WHERE group_id = ?1", [group_id])?;
+        self.connection
+            .execute("DELETE FROM groups WHERE id = ?1", [group_id])?;
+        Ok(())
+    }
+
+    pub fn delete_phrase(&mut self, phrase_id: &str) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "DELETE FROM phrase_variable_refs WHERE phrase_id = ?1",
+            [phrase_id],
+        )?;
+        self.connection
+            .execute("DELETE FROM phrases WHERE id = ?1", [phrase_id])?;
+        Ok(())
+    }
+
+    pub fn game(&self, game_id: &str) -> Result<Option<GameRecord>, RepositoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, sort_order, overlay_display_mode FROM games WHERE id = ?1",
+        )?;
+        let mut rows = statement.query([game_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(GameRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            sort_order: row.get(2)?,
+            overlay_display_mode: read_overlay_display_mode(row, 3)?,
+        }))
+    }
+
+    pub fn group(&self, group_id: &str) -> Result<Option<GroupRecord>, RepositoryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, game_id, name, collapsed, sort_order FROM groups WHERE id = ?1")?;
+        let mut rows = statement.query([group_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(GroupRecord {
+            id: row.get(0)?,
+            game_id: row.get(1)?,
+            name: row.get(2)?,
+            collapsed: row.get(3)?,
+            sort_order: row.get(4)?,
+        }))
+    }
+
+    pub fn phrase(&self, phrase_id: &str) -> Result<Option<PhraseRecord>, RepositoryError> {
+        let mut statement = self.connection.prepare("SELECT id, group_id, title, body_template, favorite, favorite_order, hotkey, sort_order FROM phrases WHERE id = ?1")?;
+        let mut rows = statement.query([phrase_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(PhraseRecord {
+            id: row.get(0)?,
+            group_id: row.get(1)?,
+            title: row.get(2)?,
+            body_template: row.get(3)?,
+            favorite: row.get(4)?,
+            favorite_order: row.get(5)?,
+            hotkey: row.get(6)?,
+            sort_order: row.get(7)?,
+        }))
+    }
+
+    pub fn update_game(&mut self, record: &GameRecord) -> Result<(), RepositoryError> {
+        self.connection.execute(
+            "UPDATE games SET name = ?1, sort_order = ?2, overlay_display_mode = ?3 WHERE id = ?4",
+            params![
+                record.name,
+                record.sort_order,
+                record.overlay_display_mode.as_str(),
+                record.id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_group(&mut self, record: &GroupRecord) -> Result<(), RepositoryError> {
+        self.connection.execute("UPDATE groups SET game_id = ?1, name = ?2, collapsed = ?3, sort_order = ?4 WHERE id = ?5", params![record.game_id, record.name, record.collapsed, record.sort_order, record.id])?;
+        Ok(())
+    }
+
+    pub fn update_phrase(&mut self, record: &PhraseRecord) -> Result<(), RepositoryError> {
+        self.connection.execute("UPDATE phrases SET group_id = ?1, title = ?2, body_template = ?3, favorite = ?4, favorite_order = ?5, hotkey = ?6, sort_order = ?7 WHERE id = ?8", params![record.group_id, record.title, record.body_template, record.favorite, record.favorite_order, record.hotkey, record.sort_order, record.id])?;
+        Ok(())
+    }
+
+    pub fn reorder_games(&mut self, ordered_ids: &[String]) -> Result<(), RepositoryError> {
+        let stored_ids = query_games(self.connection)?
+            .into_iter()
+            .map(|game| game.id)
+            .collect::<Vec<_>>();
+        validate_complete_order(&stored_ids, ordered_ids)?;
+        let offset = ordered_ids.len() as i64;
+        self.connection
+            .execute("UPDATE games SET sort_order = sort_order + ?1", [offset])?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE games SET sort_order = ?1 WHERE id = ?2",
+                params![index as i64, id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn reorder_groups(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepositoryError> {
+        let stored_ids = query_groups(self.connection)?
+            .into_iter()
+            .filter(|group| group.game_id == game_id)
+            .map(|group| group.id)
+            .collect::<Vec<_>>();
+        validate_complete_order(&stored_ids, ordered_ids)?;
+        let offset = ordered_ids.len() as i64;
+        self.connection.execute(
+            "UPDATE groups SET sort_order = sort_order + ?1 WHERE game_id = ?2",
+            params![offset, game_id],
+        )?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE groups SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",
+                params![index as i64, id, game_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn reorder_variable_definitions(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepositoryError> {
+        let stored_ids = self
+            .variable_definitions_for_game(game_id)?
+            .into_iter()
+            .map(|definition| definition.id)
+            .collect::<Vec<_>>();
+        validate_complete_order(&stored_ids, ordered_ids)?;
+        let offset = ordered_ids.len() as i64;
+        self.connection.execute(
+            "UPDATE variable_definitions SET sort_order = sort_order + ?1 WHERE game_id = ?2",
+            params![offset, game_id],
+        )?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE variable_definitions SET sort_order = ?1 WHERE id = ?2 AND game_id = ?3",
+                params![index as i64, id, game_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn move_phrase(
+        &mut self,
+        phrase_id: &str,
+        target_group_id: &str,
+        target_index: usize,
+    ) -> Result<(), RepositoryError> {
+        let phrase = self
+            .phrase(phrase_id)?
+            .ok_or(RepositoryError::InvalidSiblingOrder)?;
+        let mut source_ids = sibling_phrase_ids(self.connection, &phrase.group_id)?;
+        source_ids.sort_by_key(|id| {
+            self.phrase(id)
+                .ok()
+                .flatten()
+                .map(|record| record.sort_order)
+        });
+        let mut target_ids = if phrase.group_id == target_group_id {
+            source_ids.clone()
+        } else {
+            let mut ids = sibling_phrase_ids(self.connection, target_group_id)?;
+            ids.sort_by_key(|id| {
+                self.phrase(id)
+                    .ok()
+                    .flatten()
+                    .map(|record| record.sort_order)
+            });
+            ids
+        };
+        if target_index > target_ids.len() || self.group(target_group_id)?.is_none() {
+            return Err(RepositoryError::InvalidSiblingOrder);
+        }
+        if phrase.group_id == target_group_id {
+            target_ids.retain(|id| id != phrase_id);
+            if target_index > target_ids.len() {
+                return Err(RepositoryError::InvalidSiblingOrder);
+            }
+            target_ids.insert(target_index, phrase_id.to_owned());
+            return self.reorder_phrases(target_group_id, &target_ids);
+        }
+        source_ids.retain(|id| id != phrase_id);
+        let temporary_order: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM phrases WHERE group_id = ?1",
+            [target_group_id],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "UPDATE phrases SET group_id = ?1, sort_order = ?2 WHERE id = ?3",
+            params![target_group_id, temporary_order, phrase_id],
+        )?;
+        self.reorder_phrases(&phrase.group_id, &source_ids)?;
+        target_ids.insert(target_index, phrase_id.to_owned());
+        self.reorder_phrases(target_group_id, &target_ids)
+    }
+
+    pub fn reorder_favorites(
+        &mut self,
+        game_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepositoryError> {
+        let stored_ids = self
+            .phrases_for_game(game_id)?
+            .into_iter()
+            .filter(|phrase| phrase.favorite)
+            .map(|phrase| phrase.id)
+            .collect::<Vec<_>>();
+        validate_complete_order(&stored_ids, ordered_ids)?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            self.connection.execute(
+                "UPDATE phrases SET favorite_order = ?1 WHERE id = ?2",
+                params![index as i64, id],
+            )?;
+        }
         Ok(())
     }
 

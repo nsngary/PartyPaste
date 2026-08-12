@@ -157,3 +157,55 @@ fn open_creates_the_database_parent_and_persists_committed_records() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn one_hundred_mixed_phrase_moves_preserve_contiguous_unique_sibling_positions() {
+    let mut repository = Repository::in_memory().unwrap();
+    repository
+        .transaction(|tx| {
+            tx.insert_game(&game("game-1", 0))?;
+            tx.insert_group(&group("group-a", "game-1", 0))?;
+            tx.insert_group(&group("group-b", "game-1", 1))?;
+            for index in 0..11 {
+                tx.insert_phrase(&phrase(&format!("phrase-{index}"), "group-a", index))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+    for move_index in 0..100 {
+        let snapshot = repository.snapshot().unwrap();
+        let phrase_id = format!("phrase-{}", move_index % 11);
+        let current = snapshot
+            .phrases
+            .iter()
+            .find(|phrase| phrase.id == phrase_id)
+            .unwrap();
+        let target_group = if current.group_id == "group-a" {
+            "group-b"
+        } else {
+            "group-a"
+        };
+        let target_len = snapshot
+            .phrases
+            .iter()
+            .filter(|phrase| phrase.group_id == target_group)
+            .count();
+        repository
+            .transaction(|tx| {
+                tx.move_phrase(&phrase_id, target_group, move_index % (target_len + 1))
+            })
+            .unwrap();
+
+        let snapshot = repository.snapshot().unwrap();
+        for group_id in ["group-a", "group-b"] {
+            let positions = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.group_id == group_id)
+                .map(|phrase| phrase.sort_order)
+                .collect::<Vec<_>>();
+            assert_eq!(positions, (0..positions.len() as i64).collect::<Vec<_>>());
+        }
+    }
+}
