@@ -24,8 +24,6 @@ export const validatePhraseTitle = (value: string) => validateText(value, 120);
 export const validatePhraseBody = (value: string) =>
   validateText(value, 4000, false);
 
-export function normalizeLibraryText(value: string): string {
-  // Upper-then-lower expands compatibility folds such as German sharp-s in
-  // JavaScript runtimes that do not expose Unicode's CaseFolding.txt directly.
-  return value.trim().normalize("NFKC").toUpperCase().toLowerCase();
+export function normalizeLibraryInput(value: string): string {
+  return value.trim().normalize("NFKC");
 }

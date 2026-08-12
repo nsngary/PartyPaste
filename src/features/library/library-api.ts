@@ -80,6 +80,30 @@ export interface GroupDeleteImpact {
   phraseVariableRefCount: number;
 }
 
+export interface SaveVariableDefinitionInput extends CommandInput {
+  input: {
+    id: string;
+    gameId: string;
+    name: string;
+    sortOrder: number;
+    renameConfirmed: boolean;
+    presets: Array<{ id: string; value: string; sortOrder: number }>;
+  };
+}
+
+export interface VariableDefinitionWithPresets {
+  definition: LibrarySnapshot["variableDefinitions"][number];
+  presets: LibrarySnapshot["variablePresets"];
+}
+
+export type SaveVariableCommandResult =
+  | { status: "saved"; value: LibrarySnapshot; undo: UndoReceipt }
+  | {
+      status: "rename_confirmation_required";
+      affectedPhraseCount: number;
+      affectedTokenCount: number;
+    };
+
 export interface CreateGameInput extends CommandInput {
   input: { id: string; name: string };
 }
@@ -127,16 +151,13 @@ export function createLibraryApi(
     updateGame: (input: UpdateGameInput) =>
       call<UpdateGameInput, MutationResult<GameDto>>("update_game", input),
     deleteGame: (input: { gameId: string }) =>
-      call<typeof input, MutationResult<GameDeleteImpact>>(
-        "delete_game",
-        input,
-      ),
+      call<typeof input, MutationResult<LibrarySnapshot>>("delete_game", input),
     createGroup: (input: CreateGroupInput) =>
       call<CreateGroupInput, MutationResult<GroupDto>>("create_group", input),
     updateGroup: (input: UpdateGroupInput) =>
       call<UpdateGroupInput, MutationResult<GroupDto>>("update_group", input),
     deleteGroup: (input: { groupId: string }) =>
-      call<typeof input, MutationResult<GroupDeleteImpact>>(
+      call<typeof input, MutationResult<LibrarySnapshot>>(
         "delete_group",
         input,
       ),
@@ -151,14 +172,21 @@ export function createLibraryApi(
         input,
       ),
     deletePhrase: (input: { phraseId: string }) =>
-      call<typeof input, MutationResult<PhraseDto>>("delete_phrase", input),
+      call<typeof input, MutationResult<LibrarySnapshot>>(
+        "delete_phrase",
+        input,
+      ),
     duplicatePhrase: (input: { phraseId: string; newPhraseId: string }) =>
-      call<typeof input, MutationResult<PhraseDto>>("duplicate_phrase", input),
+      call<typeof input, MutationResult<LibrarySnapshot>>(
+        "duplicate_phrase",
+        input,
+      ),
     movePhrase: (input: {
       phraseId: string;
       targetGroupId: string;
       targetIndex: number;
-    }) => call<typeof input, MutationResult<PhraseDto>>("move_phrase", input),
+    }) =>
+      call<typeof input, MutationResult<LibrarySnapshot>>("move_phrase", input),
     reorderGames: (input: { orderedIds: string[] }) =>
       call<typeof input, MutationResult<LibrarySnapshot>>(
         "reorder_games",
@@ -188,7 +216,10 @@ export function createLibraryApi(
         input,
       ),
     setFavorite: (input: { phraseId: string; favorite: boolean }) =>
-      call<typeof input, MutationResult<PhraseDto>>("set_favorite", input),
+      call<typeof input, MutationResult<LibrarySnapshot>>(
+        "set_favorite",
+        input,
+      ),
     searchPhrases: (input: { gameId: string; query: string }) =>
       call<typeof input, PhraseDto[]>("search_phrases", input),
     undoOperation: (input: { operationId: string }) =>
@@ -197,5 +228,28 @@ export function createLibraryApi(
       call<typeof input, GameDeleteImpact>("get_game_delete_impact", input),
     getGroupDeleteImpact: (input: { groupId: string }) =>
       call<typeof input, GroupDeleteImpact>("get_group_delete_impact", input),
+    listVariableDefinitions: (input: { gameId: string }) =>
+      call<typeof input, VariableDefinitionWithPresets[]>(
+        "list_variable_definitions",
+        input,
+      ),
+    saveVariableDefinition: (input: SaveVariableDefinitionInput) =>
+      call<SaveVariableDefinitionInput, SaveVariableCommandResult>(
+        "save_variable_definition",
+        input,
+      ),
+    reorderVariablePresets: (input: {
+      variableDefinitionId: string;
+      orderedIds: string[];
+    }) =>
+      call<typeof input, MutationResult<LibrarySnapshot>>(
+        "reorder_variable_presets",
+        input,
+      ),
+    deleteVariableDefinition: (input: { variableDefinitionId: string }) =>
+      call<typeof input, MutationResult<LibrarySnapshot>>(
+        "delete_variable_definition",
+        input,
+      ),
   };
 }

@@ -6,10 +6,10 @@ use crate::db::Repository;
 use crate::db::models::{GameRecord, GroupRecord, LibrarySnapshot, PhraseRecord};
 use crate::error::AppError;
 use crate::services::library::{
-    CreateGameInput, CreateGroupInput, CreatePhraseInput, DeleteImpact, GameDeleteImpact,
-    GroupDeleteImpact, LibraryService, LibraryServiceError, MutationResult, SaveVariableDefinition,
-    SaveVariableResult, UpdateGameInput, UpdateGroupInput, UpdatePhraseInput,
-    VariableDefinitionWithPresets, VariableService, VariableServiceError,
+    CreateGameInput, CreateGroupInput, CreatePhraseInput, GameDeleteImpact, GroupDeleteImpact,
+    LibraryService, LibraryServiceError, MutationResult, SaveVariableCommandResult,
+    SaveVariableDefinition, UpdateGameInput, UpdateGroupInput, UpdatePhraseInput,
+    VariableDefinitionWithPresets, VariableServiceError,
 };
 
 pub struct LibraryServiceState(Mutex<LibraryService>);
@@ -52,7 +52,7 @@ pub fn update_game(
 pub fn delete_game(
     state: State<'_, LibraryServiceState>,
     game_id: String,
-) -> Result<MutationResult<GameDeleteImpact>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state.lock()?.delete_game(&game_id).map_err(library_error)
 }
 
@@ -76,7 +76,7 @@ pub fn update_group(
 pub fn delete_group(
     state: State<'_, LibraryServiceState>,
     group_id: String,
-) -> Result<MutationResult<GroupDeleteImpact>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state.lock()?.delete_group(&group_id).map_err(library_error)
 }
 
@@ -100,7 +100,7 @@ pub fn update_phrase(
 pub fn delete_phrase(
     state: State<'_, LibraryServiceState>,
     phrase_id: String,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state
         .lock()?
         .delete_phrase(&phrase_id)
@@ -112,7 +112,7 @@ pub fn duplicate_phrase(
     state: State<'_, LibraryServiceState>,
     phrase_id: String,
     new_phrase_id: String,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state
         .lock()?
         .duplicate_phrase(&phrase_id, &new_phrase_id)
@@ -125,7 +125,7 @@ pub fn move_phrase(
     phrase_id: String,
     target_group_id: String,
     target_index: usize,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state
         .lock()?
         .move_phrase(&phrase_id, &target_group_id, target_index)
@@ -196,7 +196,7 @@ pub fn set_favorite(
     state: State<'_, LibraryServiceState>,
     phrase_id: String,
     favorite: bool,
-) -> Result<MutationResult<PhraseRecord>, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     state
         .lock()?
         .set_favorite(&phrase_id, favorite)
@@ -254,16 +254,20 @@ pub fn list_variable_definitions(
     game_id: String,
 ) -> Result<Vec<VariableDefinitionWithPresets>, AppError> {
     let service = state.lock()?;
-    VariableService::list_definitions(service.repository(), &game_id).map_err(service_error)
+    service
+        .list_variable_definitions(&game_id)
+        .map_err(service_error)
 }
 
 #[tauri::command]
 pub fn save_variable_definition(
     state: State<'_, LibraryServiceState>,
     input: SaveVariableDefinition,
-) -> Result<SaveVariableResult, AppError> {
+) -> Result<SaveVariableCommandResult, AppError> {
     let mut service = state.lock()?;
-    VariableService::save_definition(service.repository_mut(), input).map_err(service_error)
+    service
+        .save_variable_definition(input)
+        .map_err(service_error)
 }
 
 #[tauri::command]
@@ -271,23 +275,21 @@ pub fn reorder_variable_presets(
     state: State<'_, LibraryServiceState>,
     variable_definition_id: String,
     ordered_ids: Vec<String>,
-) -> Result<(), AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     let mut service = state.lock()?;
-    VariableService::reorder_presets(
-        service.repository_mut(),
-        &variable_definition_id,
-        &ordered_ids,
-    )
-    .map_err(service_error)
+    service
+        .reorder_variable_presets(&variable_definition_id, &ordered_ids)
+        .map_err(service_error)
 }
 
 #[tauri::command]
 pub fn delete_variable_definition(
     state: State<'_, LibraryServiceState>,
     variable_definition_id: String,
-) -> Result<DeleteImpact, AppError> {
+) -> Result<MutationResult<LibrarySnapshot>, AppError> {
     let mut service = state.lock()?;
-    VariableService::delete_definition(service.repository_mut(), &variable_definition_id)
+    service
+        .delete_variable_definition(&variable_definition_id)
         .map_err(service_error)
 }
 
@@ -304,6 +306,9 @@ fn library_error(error: LibraryServiceError) -> AppError {
         | LibraryServiceError::UndoExpired
         | LibraryServiceError::UndoNotFound => AppError::NotFound {
             message_key: "errors.notFound",
+        },
+        LibraryServiceError::UndoConflict => AppError::Validation {
+            message_key: "errors.validation",
         },
         LibraryServiceError::Repository(_) => AppError::Database {
             message_key: "errors.database",

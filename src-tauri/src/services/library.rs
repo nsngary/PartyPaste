@@ -1,7 +1,8 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use unicode_casefold::UnicodeCaseFold;
@@ -106,6 +107,8 @@ pub enum LibraryServiceError {
     UndoExpired,
     #[error("undo operation was not found")]
     UndoNotFound,
+    #[error("undo operation conflicts with later changes")]
+    UndoConflict,
     #[error(transparent)]
     Repository(#[from] RepositoryError),
 }
@@ -190,8 +193,12 @@ pub struct GameDeleteImpact {
     pub phrase_variable_ref_count: usize,
 }
 
+#[derive(Clone)]
 enum InverseOperation {
-    RestoreLibrary(Box<LibrarySnapshot>),
+    ReverseChange {
+        before: Box<LibrarySnapshot>,
+        after: Box<LibrarySnapshot>,
+    },
 }
 
 struct JournalEntry {
@@ -211,7 +218,7 @@ impl UndoJournal {
         }
     }
 
-    fn record(&mut self, snapshot: LibrarySnapshot, now: u64) -> UndoReceipt {
+    fn record(&mut self, before: LibrarySnapshot, after: LibrarySnapshot, now: u64) -> UndoReceipt {
         while self.entries.len() >= UNDO_CAPACITY {
             self.entries.pop_front();
         }
@@ -223,7 +230,10 @@ impl UndoJournal {
         self.entries.push_back(JournalEntry {
             operation_id: operation_id.clone(),
             expires_at,
-            inverse: InverseOperation::RestoreLibrary(Box::new(snapshot)),
+            inverse: InverseOperation::ReverseChange {
+                before: Box::new(before),
+                after: Box::new(after),
+            },
         });
         UndoReceipt {
             operation_id,
@@ -231,7 +241,7 @@ impl UndoJournal {
         }
     }
 
-    fn take(
+    fn get(
         &mut self,
         operation_id: &str,
         now: u64,
@@ -243,11 +253,21 @@ impl UndoJournal {
         else {
             return Err(LibraryServiceError::UndoNotFound);
         };
-        let entry = self.entries.remove(index).expect("journal index exists");
-        if now >= entry.expires_at {
+        if now >= self.entries[index].expires_at {
+            self.entries.remove(index);
             return Err(LibraryServiceError::UndoExpired);
         }
-        Ok(entry.inverse)
+        Ok(self.entries[index].inverse.clone())
+    }
+
+    fn consume(&mut self, operation_id: &str) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.operation_id == operation_id)
+        {
+            self.entries.remove(index);
+        }
     }
 }
 
@@ -285,6 +305,60 @@ impl LibraryService {
         &mut self.repository
     }
 
+    pub fn list_variable_definitions(
+        &self,
+        game_id: &str,
+    ) -> Result<Vec<VariableDefinitionWithPresets>, VariableServiceError> {
+        VariableService::list_definitions(&self.repository, game_id)
+    }
+
+    pub fn save_variable_definition(
+        &mut self,
+        input: SaveVariableDefinition,
+    ) -> Result<SaveVariableCommandResult, VariableServiceError> {
+        let before = self.repository.snapshot()?;
+        match VariableService::save_definition(&mut self.repository, input)? {
+            SaveVariableResult::Saved {
+                definition: _,
+                presets: _,
+            } => {
+                let after = self.repository.snapshot()?;
+                let undo = self.journal.record(before, after.clone(), (self.clock)());
+                Ok(SaveVariableCommandResult::Saved { value: after, undo })
+            }
+            SaveVariableResult::RenameConfirmationRequired {
+                affected_phrase_count,
+                affected_token_count,
+            } => Ok(SaveVariableCommandResult::RenameConfirmationRequired {
+                affected_phrase_count,
+                affected_token_count,
+            }),
+        }
+    }
+
+    pub fn reorder_variable_presets(
+        &mut self,
+        definition_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<MutationResult<LibrarySnapshot>, VariableServiceError> {
+        let before = self.repository.snapshot()?;
+        VariableService::reorder_presets(&mut self.repository, definition_id, ordered_ids)?;
+        let after = self.repository.snapshot()?;
+        let undo = self.journal.record(before, after.clone(), (self.clock)());
+        Ok(MutationResult { value: after, undo })
+    }
+
+    pub fn delete_variable_definition(
+        &mut self,
+        definition_id: &str,
+    ) -> Result<MutationResult<LibrarySnapshot>, VariableServiceError> {
+        let before = self.repository.snapshot()?;
+        VariableService::delete_definition(&mut self.repository, definition_id)?;
+        let after = self.repository.snapshot()?;
+        let undo = self.journal.record(before, after.clone(), (self.clock)());
+        Ok(MutationResult { value: after, undo })
+    }
+
     pub fn get_library(&self) -> Result<LibrarySnapshot, LibraryServiceError> {
         Ok(self.repository.snapshot()?)
     }
@@ -295,7 +369,8 @@ impl LibraryService {
     ) -> Result<MutationResult<T>, LibraryServiceError> {
         let before = self.repository.snapshot()?;
         let value = operation(&mut self.repository)?;
-        let undo = self.journal.record(before, (self.clock)());
+        let after = self.repository.snapshot()?;
+        let undo = self.journal.record(before, after, (self.clock)());
         Ok(MutationResult { value, undo })
     }
 
@@ -538,8 +613,8 @@ impl LibraryService {
     pub fn delete_game(
         &mut self,
         game_id: &str,
-    ) -> Result<MutationResult<GameDeleteImpact>, LibraryServiceError> {
-        let impact = self.game_delete_impact(game_id)?;
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        self.game_delete_impact(game_id)?;
         let game_id = game_id.to_owned();
         self.mutate(|repository| {
             let remaining = repository
@@ -553,15 +628,15 @@ impl LibraryService {
                 tx.delete_game_with_children(&game_id)?;
                 tx.reorder_games(&remaining).map_err(map_repository_error)
             })?;
-            Ok(impact)
+            Ok(repository.snapshot()?)
         })
     }
 
     pub fn delete_group(
         &mut self,
         group_id: &str,
-    ) -> Result<MutationResult<GroupDeleteImpact>, LibraryServiceError> {
-        let impact = self.group_delete_impact(group_id)?;
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
+        self.group_delete_impact(group_id)?;
         let group_id = group_id.to_owned();
         self.mutate(|repository| {
             let snapshot = repository.snapshot()?;
@@ -573,23 +648,43 @@ impl LibraryService {
                 .ok_or(LibraryServiceError::NotFound)?;
             let remaining = snapshot
                 .groups
-                .into_iter()
+                .iter()
                 .filter(|group| group.game_id == game_id && group.id != group_id)
-                .map(|group| group.id)
+                .map(|group| group.id.clone())
                 .collect::<Vec<_>>();
+            let mut favorite_ids = snapshot
+                .phrases
+                .iter()
+                .filter(|phrase| phrase.favorite && phrase.group_id != group_id)
+                .filter(|phrase| {
+                    snapshot
+                        .groups
+                        .iter()
+                        .any(|group| group.id == phrase.group_id && group.game_id == game_id)
+                })
+                .map(|phrase| phrase.id.clone())
+                .collect::<Vec<_>>();
+            favorite_ids.sort_by_key(|id| {
+                snapshot
+                    .phrases
+                    .iter()
+                    .find(|phrase| &phrase.id == id)
+                    .and_then(|phrase| phrase.favorite_order)
+            });
             repository.transaction_with(|tx| {
                 tx.delete_group_with_children(&group_id)?;
-                tx.reorder_groups(&game_id, &remaining)
+                tx.reorder_groups(&game_id, &remaining)?;
+                tx.reorder_favorites(&game_id, &favorite_ids)
                     .map_err(map_repository_error)
             })?;
-            Ok(impact)
+            Ok(repository.snapshot()?)
         })
     }
 
     pub fn delete_phrase(
         &mut self,
         phrase_id: &str,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         let phrase_id = phrase_id.to_owned();
         self.mutate(|repository| {
             let snapshot = repository.snapshot()?;
@@ -636,7 +731,7 @@ impl LibraryService {
                 tx.reorder_favorites(&game_id, &favorite_ids)
                     .map_err(map_repository_error)
             })?;
-            Ok(record)
+            Ok(repository.snapshot()?)
         })
     }
 
@@ -644,7 +739,7 @@ impl LibraryService {
         &mut self,
         phrase_id: &str,
         new_phrase_id: &str,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         if new_phrase_id.is_empty() {
             return Err(LibraryServiceError::InvalidPhraseTitle);
         }
@@ -682,8 +777,7 @@ impl LibraryService {
                 tx.reorder_phrases(&duplicate.group_id, &sibling_ids)
                     .map_err(map_repository_error)
             })?;
-            duplicate.sort_order = insert_at as i64;
-            Ok(duplicate)
+            Ok(repository.snapshot()?)
         })
     }
 
@@ -692,7 +786,7 @@ impl LibraryService {
         phrase_id: &str,
         target_group_id: &str,
         target_index: usize,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         let phrase_id = phrase_id.to_owned();
         let target_group_id = target_group_id.to_owned();
         self.mutate(|repository| {
@@ -721,12 +815,7 @@ impl LibraryService {
                 tx.move_phrase(&phrase_id, &target_group_id, target_index)
                     .map_err(map_repository_error)
             })?;
-            repository
-                .snapshot()?
-                .phrases
-                .into_iter()
-                .find(|phrase| phrase.id == phrase_id)
-                .ok_or(LibraryServiceError::NotFound)
+            Ok(repository.snapshot()?)
         })
     }
 
@@ -810,7 +899,7 @@ impl LibraryService {
         &mut self,
         phrase_id: &str,
         favorite: bool,
-    ) -> Result<MutationResult<PhraseRecord>, LibraryServiceError> {
+    ) -> Result<MutationResult<LibrarySnapshot>, LibraryServiceError> {
         let phrase_id = phrase_id.to_owned();
         self.mutate(|repository| {
             let snapshot = repository.snapshot()?;
@@ -864,7 +953,7 @@ impl LibraryService {
                 tx.reorder_favorites(&game_id, &ids)
                     .map_err(map_repository_error)
             })?;
-            Ok(record)
+            Ok(repository.snapshot()?)
         })
     }
 
@@ -901,12 +990,255 @@ impl LibraryService {
         &mut self,
         operation_id: &str,
     ) -> Result<LibrarySnapshot, LibraryServiceError> {
-        match self.journal.take(operation_id, (self.clock)())? {
-            InverseOperation::RestoreLibrary(snapshot) => {
-                self.repository.replace_snapshot(&snapshot)?
+        let inverse = self.journal.get(operation_id, (self.clock)())?;
+        let current = self.repository.snapshot()?;
+        let restored = reverse_change(current, inverse)?;
+        self.repository.replace_snapshot(&restored)?;
+        self.journal.consume(operation_id);
+        Ok(restored)
+    }
+}
+
+fn reverse_change(
+    mut current: LibrarySnapshot,
+    inverse: InverseOperation,
+) -> Result<LibrarySnapshot, LibraryServiceError> {
+    let InverseOperation::ReverseChange { before, after } = inverse;
+    reverse_records(&mut current.games, &before.games, &after.games, |record| {
+        record.id.clone()
+    })?;
+    reverse_records(
+        &mut current.groups,
+        &before.groups,
+        &after.groups,
+        |record| record.id.clone(),
+    )?;
+    reverse_records(
+        &mut current.phrases,
+        &before.phrases,
+        &after.phrases,
+        |record| record.id.clone(),
+    )?;
+    reverse_records(
+        &mut current.variable_definitions,
+        &before.variable_definitions,
+        &after.variable_definitions,
+        |record| record.id.clone(),
+    )?;
+    reverse_records(
+        &mut current.variable_presets,
+        &before.variable_presets,
+        &after.variable_presets,
+        |record| record.id.clone(),
+    )?;
+    reverse_records(
+        &mut current.phrase_variable_refs,
+        &before.phrase_variable_refs,
+        &after.phrase_variable_refs,
+        |record| format!("{}\0{}", record.phrase_id, record.token_order),
+    )?;
+    reverse_records(
+        &mut current.settings,
+        &before.settings,
+        &after.settings,
+        |record| record.key.clone(),
+    )?;
+    normalize_snapshot_orders(&mut current);
+    validate_snapshot_relationships(&current)?;
+    Ok(current)
+}
+
+fn validate_snapshot_relationships(snapshot: &LibrarySnapshot) -> Result<(), LibraryServiceError> {
+    let valid = snapshot
+        .groups
+        .iter()
+        .all(|group| snapshot.games.iter().any(|game| game.id == group.game_id))
+        && snapshot.phrases.iter().all(|phrase| {
+            snapshot
+                .groups
+                .iter()
+                .any(|group| group.id == phrase.group_id)
+        })
+        && snapshot.variable_definitions.iter().all(|definition| {
+            snapshot
+                .games
+                .iter()
+                .any(|game| game.id == definition.game_id)
+        })
+        && snapshot.variable_presets.iter().all(|preset| {
+            snapshot
+                .variable_definitions
+                .iter()
+                .any(|definition| definition.id == preset.variable_definition_id)
+        })
+        && snapshot.phrase_variable_refs.iter().all(|reference| {
+            snapshot
+                .phrases
+                .iter()
+                .any(|phrase| phrase.id == reference.phrase_id)
+                && snapshot
+                    .variable_definitions
+                    .iter()
+                    .any(|definition| definition.id == reference.variable_definition_id)
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(LibraryServiceError::UndoConflict)
+    }
+}
+
+fn reverse_records<T: Clone + Eq + Serialize + DeserializeOwned>(
+    current: &mut Vec<T>,
+    before: &[T],
+    after: &[T],
+    key: impl Fn(&T) -> String,
+) -> Result<(), LibraryServiceError> {
+    let before_by_id = before
+        .iter()
+        .map(|record| (key(record), record))
+        .collect::<HashMap<_, _>>();
+    let after_by_id = after
+        .iter()
+        .map(|record| (key(record), record))
+        .collect::<HashMap<_, _>>();
+    let changed_ids = before_by_id
+        .keys()
+        .chain(after_by_id.keys())
+        .filter(|id| before_by_id.get(*id) != after_by_id.get(*id))
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    for id in changed_ids {
+        let current_index = current.iter().position(|record| key(record) == id);
+        match (before_by_id.get(&id), after_by_id.get(&id), current_index) {
+            (None, Some(after_record), Some(index))
+                if equal_except_derived_order(&current[index], after_record)? =>
+            {
+                current.remove(index);
             }
+            (Some(before_record), None, None) => current.push((*before_record).clone()),
+            (Some(before_record), Some(after_record), Some(index)) => {
+                current[index] =
+                    reverse_changed_fields(&current[index], before_record, after_record)?;
+            }
+            _ => return Err(LibraryServiceError::UndoConflict),
         }
-        Ok(self.repository.snapshot()?)
+    }
+    Ok(())
+}
+
+fn equal_except_derived_order<T: Serialize>(
+    current: &T,
+    after: &T,
+) -> Result<bool, LibraryServiceError> {
+    let mut current =
+        serde_json::to_value(current).map_err(|_| LibraryServiceError::UndoConflict)?;
+    let mut after = serde_json::to_value(after).map_err(|_| LibraryServiceError::UndoConflict)?;
+    for value in [&mut current, &mut after] {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("sortOrder");
+            object.remove("favoriteOrder");
+        }
+    }
+    Ok(current == after)
+}
+
+fn reverse_changed_fields<T: Serialize + DeserializeOwned>(
+    current: &T,
+    before: &T,
+    after: &T,
+) -> Result<T, LibraryServiceError> {
+    let mut current =
+        serde_json::to_value(current).map_err(|_| LibraryServiceError::UndoConflict)?;
+    let before = serde_json::to_value(before).map_err(|_| LibraryServiceError::UndoConflict)?;
+    let after = serde_json::to_value(after).map_err(|_| LibraryServiceError::UndoConflict)?;
+    let (Some(current), Some(before), Some(after)) = (
+        current.as_object_mut(),
+        before.as_object(),
+        after.as_object(),
+    ) else {
+        return Err(LibraryServiceError::UndoConflict);
+    };
+    for (field, before_value) in before {
+        let after_value = after.get(field).ok_or(LibraryServiceError::UndoConflict)?;
+        if before_value != after_value {
+            if current.get(field) != Some(after_value) {
+                return Err(LibraryServiceError::UndoConflict);
+            }
+            current.insert(field.clone(), before_value.clone());
+        }
+    }
+    serde_json::from_value(serde_json::Value::Object(current.clone()))
+        .map_err(|_| LibraryServiceError::UndoConflict)
+}
+
+fn normalize_snapshot_orders(snapshot: &mut LibrarySnapshot) {
+    snapshot
+        .games
+        .sort_by_key(|record| (record.sort_order, record.id.clone()));
+    for (index, record) in snapshot.games.iter_mut().enumerate() {
+        record.sort_order = index as i64;
+    }
+    for game in &snapshot.games {
+        let mut siblings = snapshot
+            .groups
+            .iter_mut()
+            .filter(|record| record.game_id == game.id)
+            .collect::<Vec<_>>();
+        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
+        for (index, record) in siblings.into_iter().enumerate() {
+            record.sort_order = index as i64;
+        }
+        let group_ids = snapshot
+            .groups
+            .iter()
+            .filter(|record| record.game_id == game.id)
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>();
+        let mut favorites = snapshot
+            .phrases
+            .iter_mut()
+            .filter(|record| record.favorite && group_ids.contains(&record.group_id.as_str()))
+            .collect::<Vec<_>>();
+        favorites
+            .sort_by_key(|record| (record.favorite_order.unwrap_or(i64::MAX), record.id.clone()));
+        for (index, record) in favorites.into_iter().enumerate() {
+            record.favorite_order = Some(index as i64);
+        }
+    }
+    for group in &snapshot.groups {
+        let mut siblings = snapshot
+            .phrases
+            .iter_mut()
+            .filter(|record| record.group_id == group.id)
+            .collect::<Vec<_>>();
+        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
+        for (index, record) in siblings.into_iter().enumerate() {
+            record.sort_order = index as i64;
+        }
+    }
+    for game in &snapshot.games {
+        let mut siblings = snapshot
+            .variable_definitions
+            .iter_mut()
+            .filter(|record| record.game_id == game.id)
+            .collect::<Vec<_>>();
+        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
+        for (index, record) in siblings.into_iter().enumerate() {
+            record.sort_order = index as i64;
+        }
+    }
+    for definition in &snapshot.variable_definitions {
+        let mut siblings = snapshot
+            .variable_presets
+            .iter_mut()
+            .filter(|record| record.variable_definition_id == definition.id)
+            .collect::<Vec<_>>();
+        siblings.sort_by_key(|record| (record.sort_order, record.id.clone()));
+        for (index, record) in siblings.into_iter().enumerate() {
+            record.sort_order = index as i64;
+        }
     }
 }
 
@@ -964,6 +1296,28 @@ pub enum SaveVariableResult {
         affected_phrase_count: usize,
         affected_token_count: usize,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SaveVariableCommandResult {
+    Saved {
+        value: LibrarySnapshot,
+        undo: UndoReceipt,
+    },
+    RenameConfirmationRequired {
+        affected_phrase_count: usize,
+        affected_token_count: usize,
+    },
+}
+
+impl SaveVariableCommandResult {
+    pub fn undo_receipt(&self) -> Option<&UndoReceipt> {
+        match self {
+            Self::Saved { undo, .. } => Some(undo),
+            Self::RenameConfirmationRequired { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

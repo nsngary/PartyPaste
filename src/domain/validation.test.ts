@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  normalizeLibraryText,
+  normalizeLibraryInput,
   validateGameName,
   validateGroupName,
   validatePhraseBody,
@@ -46,8 +46,9 @@ describe("library validation", () => {
     expect(validatePhraseTitle("🎮".repeat(120)).ok).toBe(true);
   });
 
-  it("normalizes search text with compatibility normalization and case folding", () => {
-    expect(normalizeLibraryText("  ＳＴＲＡＳＳＥ  ")).toBe("strasse");
-    expect(normalizeLibraryText("Straße")).toBe("strasse");
+  it("normalizes form input without pretending to implement Unicode case folding", () => {
+    expect(normalizeLibraryInput("  ＳＴＲＡＳＳＥ  ")).toBe("STRASSE");
+    expect(normalizeLibraryInput("Straße")).toBe("Straße");
+    expect(normalizeLibraryInput("ı")).toBe("ı");
   });
 });

@@ -64,6 +64,31 @@ describe("library command API", () => {
     ["undoOperation", "undo_operation", { operationId: "op" }],
     ["getGameDeleteImpact", "get_game_delete_impact", { gameId: "g" }],
     ["getGroupDeleteImpact", "get_group_delete_impact", { groupId: "r" }],
+    ["listVariableDefinitions", "list_variable_definitions", { gameId: "g" }],
+    [
+      "saveVariableDefinition",
+      "save_variable_definition",
+      {
+        input: {
+          id: "v",
+          gameId: "g",
+          name: "Count",
+          sortOrder: 0,
+          renameConfirmed: false,
+          presets: [],
+        },
+      },
+    ],
+    [
+      "reorderVariablePresets",
+      "reorder_variable_presets",
+      { variableDefinitionId: "v", orderedIds: ["p2", "p1"] },
+    ],
+    [
+      "deleteVariableDefinition",
+      "delete_variable_definition",
+      { variableDefinitionId: "v" },
+    ],
   ] as const)(
     "%s invokes %s with typed input",
     async (method, command, input) => {
