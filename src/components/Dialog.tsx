@@ -22,14 +22,15 @@ export function Dialog({
   title,
 }: DialogProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
-  useModalFocus({ containerRef, initialFocusRef, onClose, open });
+  useModalFocus({ containerRef, initialFocusRef, onClose, open, portalRef });
 
   if (!open) return null;
 
   return createPortal(
-    <div className="pp-modal-backdrop">
+    <div className="pp-modal-backdrop" ref={portalRef}>
       <div
         aria-describedby={description ? descriptionId : undefined}
         aria-labelledby={titleId}

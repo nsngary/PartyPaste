@@ -101,6 +101,127 @@ describe("PartyPaste design-system primitives", () => {
     expect(opener).toBe(document.activeElement);
   });
 
+  it("makes the application background inert and restores its exact state", async () => {
+    const user = userEvent.setup();
+    const preHiddenSibling = document.createElement("div");
+    preHiddenSibling.inert = true;
+    preHiddenSibling.setAttribute("inert", "inert");
+    preHiddenSibling.setAttribute("aria-hidden", "false");
+    document.body.append(preHiddenSibling);
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open settings
+          </button>
+          <Dialog open={open} title="Settings" onClose={() => setOpen(false)}>
+            <button type="button">Done</button>
+          </Dialog>
+        </>
+      );
+    }
+
+    try {
+      const { container } = render(<Harness />);
+      const initialContainerInert = container.inert;
+      const initialContainerInertAttribute = container.getAttribute("inert");
+      await user.click(screen.getByRole("button", { name: "Open settings" }));
+
+      const dialog = screen.getByRole("dialog", { name: "Settings" });
+      const activePortal = dialog.parentElement;
+      expect(container.inert).toBe(true);
+      expect(container.getAttribute("aria-hidden")).toBe("true");
+      expect(preHiddenSibling.inert).toBe(true);
+      expect(preHiddenSibling.getAttribute("inert")).toBe("");
+      expect(preHiddenSibling.getAttribute("aria-hidden")).toBe("true");
+      expect(activePortal?.inert).not.toBe(true);
+      expect(activePortal?.hasAttribute("inert")).toBe(false);
+      expect(activePortal?.hasAttribute("aria-hidden")).toBe(false);
+
+      await user.keyboard("{Escape}");
+      expect(container.inert).toBe(initialContainerInert);
+      expect(container.getAttribute("inert")).toBe(
+        initialContainerInertAttribute,
+      );
+      expect(container.hasAttribute("aria-hidden")).toBe(false);
+      expect(preHiddenSibling.inert).toBe(true);
+      expect(preHiddenSibling.getAttribute("inert")).toBe("inert");
+      expect(preHiddenSibling.getAttribute("aria-hidden")).toBe("false");
+    } finally {
+      preHiddenSibling.remove();
+    }
+  });
+
+  it("keeps the outer modal isolated until a nested drawer closes", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [dialogOpen, setDialogOpen] = useState(false);
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setDialogOpen(true)}>
+            Open editor
+          </button>
+          <Dialog
+            open={dialogOpen}
+            title="Phrase editor"
+            onClose={() => setDialogOpen(false)}
+          >
+            <button type="button" onClick={() => setDrawerOpen(true)}>
+              Open inspector
+            </button>
+            <Drawer
+              open={drawerOpen}
+              title="Phrase inspector"
+              onClose={() => setDrawerOpen(false)}
+            >
+              <button type="button">Apply</button>
+            </Drawer>
+          </Dialog>
+        </>
+      );
+    }
+
+    const { container } = render(<Harness />);
+    const applicationOpener = screen.getByRole("button", {
+      name: "Open editor",
+    });
+    await user.click(applicationOpener);
+    const nestedOpener = screen.getByRole("button", { name: "Open inspector" });
+    const outerDialog = screen.getByRole("dialog", { name: "Phrase editor" });
+    const outerPortal = outerDialog.parentElement;
+    await user.click(nestedOpener);
+
+    expect(
+      screen.getByRole("dialog", { name: "Phrase inspector" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("dialog", { name: "Phrase editor", hidden: true }),
+    ).toBeTruthy();
+    expect(outerPortal?.inert).toBe(true);
+    expect(outerPortal?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.inert).toBe(true);
+
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: "Phrase inspector" }),
+    ).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Phrase editor" })).toBeTruthy();
+    expect(outerPortal?.inert).not.toBe(true);
+    expect(outerPortal?.hasAttribute("aria-hidden")).toBe(false);
+    expect(container.inert).toBe(true);
+    expect(nestedOpener).toBe(document.activeElement);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(container.inert).not.toBe(true);
+    expect(container.hasAttribute("aria-hidden")).toBe(false);
+    expect(applicationOpener).toBe(document.activeElement);
+  });
+
   it("exposes an open drawer as a labelled modal and closes it with Escape", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

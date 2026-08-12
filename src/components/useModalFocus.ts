@@ -1,4 +1,5 @@
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useEffect, useRef } from "react";
+import { isTopModalPortal, registerModalPortal } from "./modalBackground";
 
 const focusableSelector = [
   "a[href]",
@@ -14,6 +15,7 @@ interface ModalFocusOptions {
   initialFocusRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
   open: boolean;
+  portalRef: RefObject<HTMLElement | null>;
 }
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
@@ -31,7 +33,11 @@ export function useModalFocus({
   initialFocusRef,
   onClose,
   open,
+  portalRef,
 }: ModalFocusOptions) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
 
@@ -40,17 +46,22 @@ export function useModalFocus({
         ? document.activeElement
         : null;
     const container = containerRef.current;
-    if (!container) return;
+    const portal = portalRef.current;
+    if (!container || !portal) return;
     const modal: HTMLElement = container;
+    const modalPortal: HTMLElement = portal;
+    const unregisterPortal = registerModalPortal(modalPortal);
 
     const initialTarget =
       initialFocusRef?.current ?? focusableElements(modal)[0] ?? modal;
     initialTarget.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (!isTopModalPortal(modalPortal)) return;
+
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -77,7 +88,8 @@ export function useModalFocus({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      unregisterPortal();
       previouslyFocused?.focus();
     };
-  }, [containerRef, initialFocusRef, onClose, open]);
+  }, [containerRef, initialFocusRef, open, portalRef]);
 }

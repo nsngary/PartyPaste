@@ -20,14 +20,15 @@ export function Drawer({
   title,
 }: DrawerProps) {
   const containerRef = useRef<HTMLElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
-  useModalFocus({ containerRef, initialFocusRef, onClose, open });
+  useModalFocus({ containerRef, initialFocusRef, onClose, open, portalRef });
 
   if (!open) return null;
 
   return createPortal(
-    <div className="pp-drawer-backdrop">
+    <div className="pp-drawer-backdrop" ref={portalRef}>
       <aside
         aria-describedby={description ? descriptionId : undefined}
         aria-labelledby={titleId}

@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import "../styles/controls.css";
 
 const root = document.getElementById("root");
 
