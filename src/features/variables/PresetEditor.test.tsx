@@ -1,9 +1,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppProviders, createPartyPasteI18n } from "../../i18n";
 import { PresetEditor } from "./PresetEditor";
 
 afterEach(cleanup);
+
+function english(ui: React.ReactNode) {
+  return <AppProviders i18n={createPartyPasteI18n("en")}>{ui}</AppProviders>;
+}
 
 describe("preset editor", () => {
   it("adds, edits, removes, and explicitly reorders user presets", async () => {
@@ -14,7 +19,7 @@ describe("preset editor", () => {
       { id: "b", value: "4", sortOrder: 1 },
     ];
     const { rerender } = render(
-      <PresetEditor onChange={onChange} presets={presets} />,
+      english(<PresetEditor onChange={onChange} presets={presets} />),
     );
     await user.click(screen.getByRole("button", { name: "Move 4 up" }));
     expect(onChange).toHaveBeenLastCalledWith([
@@ -25,7 +30,7 @@ describe("preset editor", () => {
     expect(onChange).toHaveBeenLastCalledWith([
       { id: "b", value: "4", sortOrder: 0 },
     ]);
-    rerender(<PresetEditor onChange={onChange} presets={[]} />);
+    rerender(english(<PresetEditor onChange={onChange} presets={[]} />));
     await user.type(screen.getByRole("textbox", { name: "New preset" }), "8");
     await user.click(screen.getByRole("button", { name: "Add preset" }));
     expect(onChange).toHaveBeenCalledWith([
@@ -36,7 +41,7 @@ describe("preset editor", () => {
   it("rejects empty values and more than 200 Unicode scalars", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<PresetEditor onChange={onChange} presets={[]} />);
+    render(english(<PresetEditor onChange={onChange} presets={[]} />));
     fireEvent.change(screen.getByRole("textbox", { name: "New preset" }), {
       target: { value: "😀".repeat(201) },
     });

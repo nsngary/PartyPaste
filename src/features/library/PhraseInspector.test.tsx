@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppProviders, createPartyPasteI18n } from "../../i18n";
 import { PhraseInspector } from "./PhraseInspector";
 
 afterEach(cleanup);
@@ -16,11 +17,17 @@ const phrase = {
   sortOrder: 0,
 } as const;
 
+function renderEnglish(ui: React.ReactNode) {
+  return render(
+    <AppProviders i18n={createPartyPasteI18n("en")}>{ui}</AppProviders>,
+  );
+}
+
 describe("phrase inspector", () => {
   it("validates exact Unicode scalar limits and invalid template syntax", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
-    render(
+    renderEnglish(
       <PhraseInspector phrase={phrase} onCancel={vi.fn()} onSave={onSave} />,
     );
     const title = screen.getByRole("textbox", { name: "Phrase title" });
@@ -39,7 +46,7 @@ describe("phrase inspector", () => {
   it("asks before discarding dirty edits and cancels immediately when pristine", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(
+    renderEnglish(
       <PhraseInspector phrase={phrase} onCancel={onCancel} onSave={vi.fn()} />,
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { Field } from "../../components/Field";
@@ -74,6 +75,7 @@ export function VariableLibrary({
   gameId,
   onUndoReceipt,
 }: VariableLibraryProps) {
+  const { t } = useTranslation();
   const [definitions, setDefinitions] = useState<
     VariableDefinitionWithPresets[]
   >([]);
@@ -93,11 +95,11 @@ export function VariableLibrary({
       );
       setError(null);
     } catch {
-      setError("Could not load variables.");
+      setError(t("manager.variablesLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [api, gameId]);
+  }, [api, gameId, t]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -105,11 +107,11 @@ export function VariableLibrary({
     if (!editing) return;
     const name = editing.name.trim().normalize("NFKC");
     if (!name) {
-      setError("Variable name is required.");
+      setError(t("manager.variableRequired"));
       return;
     }
     if (Array.from(name).length > 40) {
-      setError("Variable names must be 40 Unicode characters or fewer.");
+      setError(t("manager.variableTooLong"));
       return;
     }
     if (
@@ -117,11 +119,11 @@ export function VariableLibrary({
         (character) => character === "{" || character === "}",
       )
     ) {
-      setError("Variable names cannot contain braces.");
+      setError(t("manager.variableNoBraces"));
       return;
     }
     if (Array.from(name).some(isControlCharacter)) {
-      setError("Variable names cannot contain control characters.");
+      setError(t("manager.variableNoControl"));
       return;
     }
     const invalidPreset = editing.presets.find(
@@ -130,7 +132,7 @@ export function VariableLibrary({
         Array.from(value.trim().normalize("NFKC")).length > 200,
     );
     if (invalidPreset) {
-      setError("Every preset needs 1 to 200 Unicode characters.");
+      setError(t("manager.presetInvalid"));
       return;
     }
     try {
@@ -161,7 +163,7 @@ export function VariableLibrary({
       setError(null);
       await load();
     } catch {
-      setError("Could not save this variable.");
+      setError(t("manager.variableSaveFailed"));
     }
   }
   function move(index: number, delta: number) {
@@ -182,8 +184,8 @@ export function VariableLibrary({
     >
       <header>
         <div>
-          <h1 id="variables-heading">Variables</h1>
-          <p>Game-scoped names and reusable common values.</p>
+          <h1 id="variables-heading">{t("manager.variables")}</h1>
+          <p>{t("manager.variablesDescription")}</p>
         </div>
         <Button
           onClick={() => {
@@ -196,15 +198,15 @@ export function VariableLibrary({
             setError(null);
           }}
         >
-          New variable
+          {t("manager.newVariable")}
         </Button>
       </header>
       {loading ? (
-        <p role="status">Loading variables…</p>
+        <p role="status">{t("manager.loadingVariables")}</p>
       ) : error && !editing ? (
         <p role="alert">{error}</p>
       ) : definitions.length === 0 ? (
-        <p className="pp-empty">No variables for this game.</p>
+        <p className="pp-empty">{t("manager.noVariables")}</p>
       ) : (
         <div className="pp-variable-list">
           {definitions.map((definition, index) => (
@@ -234,9 +236,11 @@ export function VariableLibrary({
         footer={
           <>
             <Button onClick={() => setEditing(null)} variant="secondary">
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={() => void save(false)}>Save variable</Button>
+            <Button onClick={() => void save(false)}>
+              {t("manager.saveVariable")}
+            </Button>
           </>
         }
         onClose={() => setEditing(null)}
@@ -244,13 +248,13 @@ export function VariableLibrary({
         title={
           editing &&
           definitions.some(({ definition }) => definition.id === editing.id)
-            ? "Edit variable"
-            : "New variable"
+            ? t("manager.editVariable")
+            : t("manager.newVariable")
         }
       >
         {editing ? (
           <div className="pp-variable-form">
-            <Field label="Variable name" required>
+            <Field label={t("manager.variableName")} required>
               <input
                 autoFocus
                 onChange={(event) =>
@@ -275,19 +279,23 @@ export function VariableLibrary({
         footer={
           <>
             <Button onClick={() => setRenameImpact(null)} variant="secondary">
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={() => void save(true)}>Rename variable</Button>
+            <Button onClick={() => void save(true)}>
+              {t("manager.renameVariable")}
+            </Button>
           </>
         }
         onClose={() => setRenameImpact(null)}
         open={renameImpact !== null}
-        title="Confirm variable rename"
+        title={t("manager.confirmVariableRename")}
       >
         {renameImpact ? (
           <p>
-            This updates {renameImpact.affectedPhraseCount} phrases and{" "}
-            {renameImpact.affectedTokenCount} tokens in one transaction.
+            {t("manager.renameImpact", {
+              phraseCount: renameImpact.affectedPhraseCount,
+              tokenCount: renameImpact.affectedTokenCount,
+            })}
           </p>
         ) : null}
       </Dialog>
@@ -304,11 +312,14 @@ export function VariableLibrary({
         }}
         open={deleting !== null}
         title={
-          deleting ? `Delete ${deleting.definition.name}` : "Delete variable"
+          deleting
+            ? t("manager.deleteVariableTitle", {
+                name: deleting.definition.name,
+              })
+            : t("manager.deleteVariable")
         }
       >
-        Deleting the definition removes common-value assistance. Existing phrase
-        tokens remain free-text fields.
+        {t("manager.deleteVariableDescription")}
       </DeleteConfirm>
     </section>
   );

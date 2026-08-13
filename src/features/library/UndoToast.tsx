@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { ToastRegion } from "../../components/ToastRegion";
 import type { UndoReceipt } from "./library-api";
@@ -10,6 +11,7 @@ export interface UndoToastProps {
 }
 
 export function UndoToast({ onDismiss, onUndo, receipt }: UndoToastProps) {
+  const { t } = useTranslation();
   const [undoing, setUndoing] = useState(false);
   useEffect(() => {
     if (!receipt) return;
@@ -21,11 +23,11 @@ export function UndoToast({ onDismiss, onUndo, receipt }: UndoToastProps) {
   if (!receipt) return null;
   return (
     <ToastRegion
-      label="Notifications"
+      label={t("common.notifications")}
       toasts={[
         {
           id: receipt.operationId,
-          message: "Change saved. Undo is available for 10 seconds.",
+          message: t("manager.undoSaved"),
           tone: "success",
           action: (
             <Button
@@ -40,7 +42,7 @@ export function UndoToast({ onDismiss, onUndo, receipt }: UndoToastProps) {
               }}
               variant="secondary"
             >
-              Undo
+              {t("common.undo")}
             </Button>
           ),
         },

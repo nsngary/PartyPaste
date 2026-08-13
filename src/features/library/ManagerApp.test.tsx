@@ -120,7 +120,7 @@ function makeApi(
   };
 }
 
-function renderManager(api = makeApi(), width = 1440) {
+function renderManager(api = makeApi(), width = 1440, locale = "en") {
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     value: width,
@@ -129,7 +129,7 @@ function renderManager(api = makeApi(), width = 1440) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const result = render(
-    <AppProviders i18n={createPartyPasteI18n("en")}>
+    <AppProviders i18n={createPartyPasteI18n(locale)}>
       <QueryClientProvider client={queryClient}>
         <ManagerApp libraryApi={api} />
       </QueryClientProvider>
@@ -331,4 +331,19 @@ describe("manager workflows", () => {
       ).toEqual([]);
     },
   );
+
+  it("translates representative navigation, accessibility labels, and dynamic deletion counts", async () => {
+    const user = userEvent.setup();
+    const api = makeApi();
+    renderManager(api, 1440, "zh-TW");
+    await screen.findByRole("heading", { name: "片語" });
+    expect(screen.getByRole("button", { name: "新增遊戲" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "編輯 Ready" })).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "刪除遊戲 Guild Wars" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "刪除遊戲" });
+    expect(dialog.textContent).toContain("2 個群組");
+    expect(dialog.textContent).toContain("7 個片語");
+  });
 });

@@ -13,6 +13,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { IconButton } from "../../components/IconButton";
 import type { GroupDto, PhraseDto } from "./library-api";
 import { PhraseCard } from "./PhraseCard";
@@ -36,6 +37,7 @@ export interface GroupSectionProps {
 }
 
 export function GroupSection(props: GroupSectionProps) {
+  const { t } = useTranslation();
   const {
     allGroups,
     group,
@@ -99,27 +101,27 @@ export function GroupSection(props: GroupSectionProps) {
             <>
               <IconButton
                 icon={<ChevronDown size={15} />}
-                label={`Move group ${group.name} down`}
+                label={t("manager.moveGroupDown", { name: group.name })}
                 onClick={() => onMoveGroup?.(1)}
               />
               <IconButton
                 icon={<ChevronRight size={15} />}
-                label={`Move group ${group.name} up`}
+                label={t("manager.moveGroupUp", { name: group.name })}
                 onClick={() => onMoveGroup?.(-1)}
               />
               <IconButton
                 icon={<Plus size={15} />}
-                label={`New phrase in ${group.name}`}
+                label={t("manager.newPhraseIn", { name: group.name })}
                 onClick={onCreatePhrase}
               />
               <IconButton
                 icon={<Pencil size={15} />}
-                label={`Edit group ${group.name}`}
+                label={t("manager.editGroupNamed", { name: group.name })}
                 onClick={onEditGroup}
               />
               <IconButton
                 icon={<Trash2 size={15} />}
-                label={`Delete group ${group.name}`}
+                label={t("manager.deleteGroupNamed", { name: group.name })}
                 onClick={onDeleteGroup}
               />
             </>
@@ -129,6 +131,38 @@ export function GroupSection(props: GroupSectionProps) {
       {!group.collapsed ? (
         ordered.length > 0 ? (
           <DndContext
+            accessibility={{
+              announcements: {
+                onDragStart: ({ active }) =>
+                  t("manager.dndPickedUp", {
+                    name:
+                      ordered.find(({ id }) => id === active.id)?.title ?? "",
+                  }),
+                onDragMove: ({ active }) =>
+                  t("manager.dndMoved", {
+                    name:
+                      ordered.find(({ id }) => id === active.id)?.title ?? "",
+                  }),
+                onDragOver: ({ active }) =>
+                  t("manager.dndMoved", {
+                    name:
+                      ordered.find(({ id }) => id === active.id)?.title ?? "",
+                  }),
+                onDragEnd: ({ active }) =>
+                  t("manager.dndDropped", {
+                    name:
+                      ordered.find(({ id }) => id === active.id)?.title ?? "",
+                  }),
+                onDragCancel: ({ active }) =>
+                  t("manager.dndCancelled", {
+                    name:
+                      ordered.find(({ id }) => id === active.id)?.title ?? "",
+                  }),
+              },
+              screenReaderInstructions: {
+                draggable: t("manager.dndInstructions"),
+              },
+            }}
             collisionDetection={closestCenter}
             onDragEnd={dragEnd}
             sensors={sensors}
@@ -159,7 +193,7 @@ export function GroupSection(props: GroupSectionProps) {
             </SortableContext>
           </DndContext>
         ) : (
-          <p className="pp-empty">No phrases in this group.</p>
+          <p className="pp-empty">{t("manager.noPhrasesInGroup")}</p>
         )
       ) : null}
     </section>

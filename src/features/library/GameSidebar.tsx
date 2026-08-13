@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import type { GameDto } from "./library-api";
@@ -27,6 +28,7 @@ export function GameSidebar({
   section,
   selectedGameId,
 }: GameSidebarProps) {
+  const { t } = useTranslation();
   const ordered = [...games].sort((a, b) => a.sortOrder - b.sortOrder);
   function move(index: number, delta: number) {
     const to = Math.max(0, Math.min(ordered.length - 1, index + delta));
@@ -38,30 +40,32 @@ export function GameSidebar({
   return (
     <aside className="pp-game-sidebar">
       <div className="pp-game-sidebar__brand">
-        <span className="pp-brand-label">PARTYPASTE</span>
-        <span>Manager</span>
+        <span className="pp-brand-label">{t("app.brand")}</span>
+        <span>{t("app.manager")}</span>
       </div>
-      <nav aria-label="Manager features">
+      <nav aria-label={t("manager.featuresNavigation")}>
         <button
           aria-current={section === "phrases" ? "page" : undefined}
           onClick={() => onSelectSection("phrases")}
           type="button"
         >
-          Phrases
+          {t("manager.phrases")}
         </button>
         <button
           aria-current={section === "variables" ? "page" : undefined}
           onClick={() => onSelectSection("variables")}
           type="button"
         >
-          Variables
+          {t("manager.variables")}
         </button>
       </nav>
       <div className="pp-game-sidebar__heading">
-        <span className="pp-brand-label">GAMES</span>
+        <span className="pp-brand-label">
+          {t("manager.games").toUpperCase()}
+        </span>
         <Button onClick={onCreateGame} variant="secondary">
           <Plus aria-hidden="true" size={14} />
-          New game
+          {t("manager.newGame")}
         </Button>
       </div>
       <ul className="pp-game-list">
@@ -81,23 +85,23 @@ export function GameSidebar({
               <IconButton
                 disabled={index === 0}
                 icon={<ChevronUp size={14} />}
-                label={`Move game ${game.name} up`}
+                label={t("manager.moveGameUp", { name: game.name })}
                 onClick={() => move(index, -1)}
               />
               <IconButton
                 disabled={index === ordered.length - 1}
                 icon={<ChevronDown size={14} />}
-                label={`Move game ${game.name} down`}
+                label={t("manager.moveGameDown", { name: game.name })}
                 onClick={() => move(index, 1)}
               />
               <IconButton
                 icon={<Pencil size={14} />}
-                label={`Edit game ${game.name}`}
+                label={t("manager.editGameNamed", { name: game.name })}
                 onClick={() => onEditGame(game)}
               />
               <IconButton
                 icon={<Trash2 size={14} />}
-                label={`Delete game ${game.name}`}
+                label={t("manager.deleteGameNamed", { name: game.name })}
                 onClick={() => onDeleteGame(game)}
               />
             </div>

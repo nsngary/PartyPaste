@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 
@@ -16,15 +17,16 @@ export function DeleteConfirm({
   open,
   title,
 }: DeleteConfirmProps) {
+  const { t } = useTranslation();
   return (
     <Dialog
       footer={
         <>
           <Button onClick={onCancel} variant="secondary">
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button onClick={() => void onConfirm()} variant="danger">
-            Delete
+            {t("common.delete")}
           </Button>
         </>
       }

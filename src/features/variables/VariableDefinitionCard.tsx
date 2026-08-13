@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { IconButton } from "../../components/IconButton";
 import type { VariableDefinitionWithPresets } from "../library/library-api";
 
@@ -19,11 +20,14 @@ export function VariableDefinitionCard({
   onMove,
   total,
 }: VariableDefinitionCardProps) {
+  const { t } = useTranslation();
   return (
     <article className="pp-variable-card">
       <div>
         <strong>{`{${item.definition.name}}`}</strong>
-        <span>{item.presets.length} common values</span>
+        <span>
+          {t("manager.commonValueCount", { count: item.presets.length })}
+        </span>
       </div>
       <ul>
         {[...item.presets]
@@ -36,23 +40,25 @@ export function VariableDefinitionCard({
         <IconButton
           disabled={index === 0}
           icon={<ChevronUp size={15} />}
-          label={`Move ${item.definition.name} up`}
+          label={t("manager.moveVariableUp", { name: item.definition.name })}
           onClick={() => onMove(-1)}
         />
         <IconButton
           disabled={index === total - 1}
           icon={<ChevronDown size={15} />}
-          label={`Move ${item.definition.name} down`}
+          label={t("manager.moveVariableDown", { name: item.definition.name })}
           onClick={() => onMove(1)}
         />
         <IconButton
           icon={<Pencil size={15} />}
-          label={`Edit ${item.definition.name}`}
+          label={t("manager.editVariableNamed", { name: item.definition.name })}
           onClick={onEdit}
         />
         <IconButton
           icon={<Trash2 size={15} />}
-          label={`Delete ${item.definition.name}`}
+          label={t("manager.deleteVariableNamed", {
+            name: item.definition.name,
+          })}
           onClick={onDelete}
         />
       </div>

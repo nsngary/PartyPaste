@@ -1,6 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Copy, GripVertical, Pencil, Star, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { IconButton } from "../../components/IconButton";
 import type { GroupDto, PhraseDto } from "./library-api";
 
@@ -29,6 +30,7 @@ export function PhraseCard({
   phrase,
   total,
 }: PhraseCardProps) {
+  const { t } = useTranslation();
   const sortable = useSortable({ id: phrase.id });
   return (
     <article
@@ -40,7 +42,7 @@ export function PhraseCard({
       }}
     >
       <button
-        aria-label={`Drag ${phrase.title}`}
+        aria-label={t("manager.dragPhrase", { name: phrase.title })}
         className="pp-drag-handle"
         ref={sortable.setActivatorNodeRef}
         type="button"
@@ -61,30 +63,33 @@ export function PhraseCard({
       <div className="pp-phrase-card__actions">
         <IconButton
           icon={<Pencil size={15} />}
-          label={`Edit ${phrase.title}`}
+          label={t("manager.editPhrase", { name: phrase.title })}
           onClick={(event) => onEdit(event.currentTarget)}
         />
         <IconButton
           icon={<Copy size={15} />}
-          label={`Duplicate ${phrase.title}`}
+          label={t("manager.duplicatePhrase", { name: phrase.title })}
           onClick={onDuplicate}
         />
         <IconButton
           icon={
             <Star fill={phrase.favorite ? "currentColor" : "none"} size={15} />
           }
-          label={`${phrase.favorite ? "Remove" : "Add"} ${phrase.title} ${phrase.favorite ? "from" : "to"} favorites`}
+          label={t(
+            phrase.favorite ? "manager.removeFavorite" : "manager.addFavorite",
+            { name: phrase.title },
+          )}
           onClick={onToggleFavorite}
         />
         <IconButton
           icon={<Trash2 size={15} />}
-          label={`Delete ${phrase.title}`}
+          label={t("manager.deletePhraseNamed", { name: phrase.title })}
           onClick={onDelete}
         />
       </div>
       <div className="pp-move-controls">
         <button
-          aria-label={`Move ${phrase.title} up`}
+          aria-label={t("manager.movePhraseUp", { name: phrase.title })}
           className="pp-move-control"
           disabled={index === 0}
           onClick={() => onMoveBy(-1)}
@@ -93,7 +98,7 @@ export function PhraseCard({
           ↑
         </button>
         <button
-          aria-label={`Move ${phrase.title} down`}
+          aria-label={t("manager.movePhraseDown", { name: phrase.title })}
           className="pp-move-control"
           disabled={index === total - 1}
           onClick={() => onMoveBy(1)}
@@ -102,9 +107,11 @@ export function PhraseCard({
           ↓
         </button>
         <label>
-          <span className="pp-visually-hidden">{`Move ${phrase.title} to group`}</span>
+          <span className="pp-visually-hidden">
+            {t("manager.movePhraseToGroup", { name: phrase.title })}
+          </span>
           <select
-            aria-label={`Move ${phrase.title} to group`}
+            aria-label={t("manager.movePhraseToGroup", { name: phrase.title })}
             className="pp-move-select"
             onChange={(event) => {
               if (event.target.value !== phrase.groupId)

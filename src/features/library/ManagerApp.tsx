@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { Drawer } from "../../components/Drawer";
@@ -135,6 +136,7 @@ function mergeVisibleOrder(
 }
 
 export function ManagerApp({ libraryApi }: ManagerAppProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const width = useWindowWidth();
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
@@ -189,14 +191,14 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
           if (active) setSearchResults(items);
         })
         .catch(() => {
-          if (active) setOperationError("Search failed.");
+          if (active) setOperationError(t("manager.searchFailed"));
         });
     }, 250);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [libraryApi, search, selectedGameId]);
+  }, [libraryApi, search, selectedGameId, t]);
 
   const gameGroups = useMemo(
     () =>
@@ -241,7 +243,7 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
       await queryClient.invalidateQueries({ exact: true, queryKey });
       return true;
     } catch {
-      setOperationError("The change could not be saved.");
+      setOperationError(t("manager.operationFailed"));
       return false;
     }
   }
@@ -259,8 +261,8 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
     if (!validation.ok) {
       setNameError(
         validation.reason === "too_long"
-          ? "Name must be 80 Unicode characters or fewer."
-          : "Name is required.",
+          ? t("manager.nameTooLong")
+          : t("manager.nameRequired"),
       );
       return;
     }
@@ -374,13 +376,13 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
   if (libraryQuery.isLoading)
     return (
       <main className="pp-manager pp-manager--loading">
-        <p role="status">Loading library…</p>
+        <p role="status">{t("manager.loadingLibrary")}</p>
       </main>
     );
   if (libraryQuery.isError || !library)
     return (
       <main className="pp-manager pp-manager--loading">
-        <p role="alert">Could not load the library.</p>
+        <p role="alert">{t("manager.libraryLoadFailed")}</p>
       </main>
     );
   const selectedGame =
@@ -406,11 +408,11 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
       <section className="pp-manager__content">
         {!selectedGame ? (
           <div className="pp-manager__empty">
-            <h1>No games yet</h1>
+            <h1>{t("manager.noGames")}</h1>
             <Button
               onClick={() => openNameDialog({ kind: "game", item: null })}
             >
-              New game
+              {t("manager.newGame")}
             </Button>
           </div>
         ) : section === "variables" ? (
@@ -435,7 +437,7 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
                 onClick={() => openNameDialog({ kind: "group", item: null })}
                 variant="secondary"
               >
-                New group
+                {t("manager.newGroup")}
               </Button>
             </div>
             <div className="pp-groups">
@@ -444,7 +446,7 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
                     {
                       id: "__favorites",
                       gameId: selectedGame.id,
-                      name: "Favorites",
+                      name: t("manager.favorites"),
                       collapsed: false,
                       sortOrder: 0,
                     },
@@ -570,23 +572,23 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
       </section>
       {section === "phrases" && width >= 1000 ? (
         <section
-          aria-label="Phrase inspector"
+          aria-label={t("manager.inspector")}
           className="pp-manager__inspector"
         >
           <header>
-            <h2>Phrase inspector</h2>
+            <h2>{t("manager.inspector")}</h2>
           </header>
-          {inspector ?? <p className="pp-empty">Select a phrase to edit it.</p>}
+          {inspector ?? <p className="pp-empty">{t("manager.selectPhrase")}</p>}
         </section>
       ) : null}
       {section === "phrases" && width < 1000 ? (
         <Drawer
-          description="Edit phrase details"
+          description={t("manager.inspectorDescription")}
           onClose={() =>
             inspectorDirty ? setDiscardDrawerOpen(true) : closeInspector()
           }
           open={Boolean(inspector)}
-          title="Phrase inspector"
+          title={t("manager.inspector")}
         >
           {inspector}
         </Drawer>
@@ -598,7 +600,7 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
               onClick={() => setDiscardDrawerOpen(false)}
               variant="secondary"
             >
-              Keep editing
+              {t("manager.keepEditing")}
             </Button>
             <Button
               onClick={() => {
@@ -607,23 +609,23 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
               }}
               variant="danger"
             >
-              Discard
+              {t("manager.discard")}
             </Button>
           </>
         }
         onClose={() => setDiscardDrawerOpen(false)}
         open={discardDrawerOpen}
-        title="Discard changes?"
+        title={t("manager.discardChanges")}
       >
-        <p>Your unsaved phrase edits will be lost.</p>
+        <p>{t("manager.unsavedChangesLost")}</p>
       </Dialog>
       <Dialog
         footer={
           <>
             <Button onClick={() => setNameDialog(null)} variant="secondary">
-              Cancel
+              {t("common.cancel")}
             </Button>
-            <Button onClick={() => void saveName()}>Save</Button>
+            <Button onClick={() => void saveName()}>{t("common.save")}</Button>
           </>
         }
         onClose={() => setNameDialog(null)}
@@ -631,16 +633,20 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
         title={
           nameDialog?.kind === "game"
             ? nameDialog.item
-              ? "Edit game"
-              : "New game"
+              ? t("manager.editGame")
+              : t("manager.newGame")
             : nameDialog?.item
-              ? "Edit group"
-              : "New group"
+              ? t("manager.editGroup")
+              : t("manager.newGroup")
         }
       >
         <Field
           error={nameError}
-          label={nameDialog?.kind === "game" ? "Game name" : "Group name"}
+          label={
+            nameDialog?.kind === "game"
+              ? t("manager.gameName")
+              : t("manager.groupName")
+          }
           required
         >
           <input
@@ -656,17 +662,25 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
         open={deleteTarget !== null}
         title={
           deleteTarget?.kind === "game"
-            ? "Delete game"
+            ? t("manager.deleteGame")
             : deleteTarget?.kind === "group"
-              ? "Delete group"
-              : "Delete phrase"
+              ? t("manager.deleteGroup")
+              : t("manager.deletePhrase")
         }
       >
         {deleteTarget?.kind === "game"
-          ? `This removes ${deleteTarget.impact.groupCount} groups, ${deleteTarget.impact.phraseCount} phrases, ${deleteTarget.impact.variableDefinitionCount} variables, and ${deleteTarget.impact.variablePresetCount} presets.`
+          ? t("manager.gameDeleteImpact", {
+              groupCount: deleteTarget.impact.groupCount,
+              phraseCount: deleteTarget.impact.phraseCount,
+              variableCount: deleteTarget.impact.variableDefinitionCount,
+              presetCount: deleteTarget.impact.variablePresetCount,
+            })
           : deleteTarget?.kind === "group"
-            ? `This removes ${deleteTarget.impact.phraseCount} phrases and ${deleteTarget.impact.phraseVariableRefCount} variable references.`
-            : "This phrase will be deleted."}
+            ? t("manager.groupDeleteImpact", {
+                phraseCount: deleteTarget.impact.phraseCount,
+                referenceCount: deleteTarget.impact.phraseVariableRefCount,
+              })
+            : t("manager.deletePhraseDescription")}
       </DeleteConfirm>
       <UndoToast
         onDismiss={() => setUndo(null)}

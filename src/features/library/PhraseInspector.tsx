@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { Field } from "../../components/Field";
@@ -28,6 +29,7 @@ export function PhraseInspector({
   onSave,
   phrase = null,
 }: PhraseInspectorProps) {
+  const { t } = useTranslation();
   const initial = {
     title: phrase?.title ?? "",
     bodyTemplate: phrase?.bodyTemplate ?? "",
@@ -71,8 +73,8 @@ export function PhraseInspector({
     if (!validTitle.ok) {
       setError(
         validTitle.reason === "too_long"
-          ? "Phrase title must be 120 Unicode characters or fewer."
-          : "Phrase title is required.",
+          ? t("manager.phraseTitleTooLong")
+          : t("manager.phraseTitleRequired"),
       );
       return;
     }
@@ -80,13 +82,13 @@ export function PhraseInspector({
     if (!validBody.ok) {
       setError(
         validBody.reason === "too_long"
-          ? "Phrase body must be 4000 Unicode characters or fewer."
-          : "Phrase body is required.",
+          ? t("manager.phraseBodyTooLong")
+          : t("manager.phraseBodyRequired"),
       );
       return;
     }
     if (parseTemplate(validBody.value).issues.length > 0) {
-      setError("Fix the template syntax before saving.");
+      setError(t("manager.templateSyntaxError"));
       return;
     }
     setSaving(true);
@@ -105,20 +107,23 @@ export function PhraseInspector({
   return (
     <>
       <form className="pp-inspector-form" onSubmit={submit}>
-        <Field label="Phrase title" required>
+        <Field label={t("manager.phraseTitle")} required>
           <input
             onChange={(event) => setTitle(event.target.value)}
             ref={titleRef}
             value={title}
           />
         </Field>
-        <Field label="Phrase body" required>
+        <Field label={t("manager.phraseBody")} required>
           <textarea
             onChange={(event) => setBody(event.target.value)}
             value={body}
           />
         </Field>
-        <Field description="Optional Windows shortcut" label="Shortcut">
+        <Field
+          description={t("manager.shortcutDescription")}
+          label={t("manager.shortcut")}
+        >
           <input
             onChange={(event) => setHotkey(event.target.value)}
             value={hotkey}
@@ -131,10 +136,14 @@ export function PhraseInspector({
         ) : null}
         <div className="pp-form-actions">
           <Button onClick={cancel} variant="secondary">
-            Cancel
+            {t("common.cancel")}
           </Button>
-          <Button loading={saving} loadingLabel="Saving phrase" type="submit">
-            Save phrase
+          <Button
+            loading={saving}
+            loadingLabel={t("manager.savingPhrase")}
+            type="submit"
+          >
+            {t("manager.savePhrase")}
           </Button>
         </div>
       </form>
@@ -142,7 +151,7 @@ export function PhraseInspector({
         footer={
           <>
             <Button onClick={() => setDiscardOpen(false)} variant="secondary">
-              Keep editing
+              {t("manager.keepEditing")}
             </Button>
             <Button
               onClick={() => {
@@ -151,15 +160,15 @@ export function PhraseInspector({
               }}
               variant="danger"
             >
-              Discard
+              {t("manager.discard")}
             </Button>
           </>
         }
         onClose={() => setDiscardOpen(false)}
         open={discardOpen}
-        title="Discard changes?"
+        title={t("manager.discardChanges")}
       >
-        <p>Your unsaved phrase edits will be lost.</p>
+        <p>{t("manager.unsavedChangesLost")}</p>
       </Dialog>
     </>
   );

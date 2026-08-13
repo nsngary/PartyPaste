@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppProviders, createPartyPasteI18n } from "../../i18n";
 import { GroupSection } from "./GroupSection";
 
 afterEach(cleanup);
@@ -30,21 +31,26 @@ describe("group ordering alternatives", () => {
     } as const;
     const second = { ...phrase, id: "p2", title: "Go", sortOrder: 1 };
     render(
-      <GroupSection
-        allGroups={[group, { ...group, id: "g2", name: "Trade", sortOrder: 1 }]}
-        group={group}
-        phrases={[phrase, second]}
-        onCreatePhrase={vi.fn()}
-        onDeleteGroup={vi.fn()}
-        onDeletePhrase={vi.fn()}
-        onDuplicatePhrase={vi.fn()}
-        onEditGroup={vi.fn()}
-        onEditPhrase={vi.fn()}
-        onMovePhrase={onMove}
-        onMoveGroup={onMoveGroup}
-        onReorderPhrases={onReorder}
-        onToggleFavorite={vi.fn()}
-      />,
+      <AppProviders i18n={createPartyPasteI18n("en")}>
+        <GroupSection
+          allGroups={[
+            group,
+            { ...group, id: "g2", name: "Trade", sortOrder: 1 },
+          ]}
+          group={group}
+          phrases={[phrase, second]}
+          onCreatePhrase={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          onDeletePhrase={vi.fn()}
+          onDuplicatePhrase={vi.fn()}
+          onEditGroup={vi.fn()}
+          onEditPhrase={vi.fn()}
+          onMovePhrase={onMove}
+          onMoveGroup={onMoveGroup}
+          onReorderPhrases={onReorder}
+          onToggleFavorite={vi.fn()}
+        />
+      </AppProviders>,
     );
     expect(
       screen

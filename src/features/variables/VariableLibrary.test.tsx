@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppProviders, createPartyPasteI18n } from "../../i18n";
 import type { VariableDefinitionWithPresets } from "../library/library-api";
 import { VariableLibrary, type VariableLibraryApi } from "./VariableLibrary";
 
@@ -30,6 +31,12 @@ const definitions: VariableDefinitionWithPresets[] = [
     presets: [],
   },
 ];
+
+function renderEnglish(ui: React.ReactNode) {
+  return render(
+    <AppProviders i18n={createPartyPasteI18n("en")}>{ui}</AppProviders>,
+  );
+}
 
 function makeApi(
   overrides: Partial<VariableLibraryApi> = {},
@@ -63,7 +70,9 @@ describe("variable library", () => {
   it("creates, edits, reorders, and deletes game-scoped definitions", async () => {
     const user = userEvent.setup();
     const api = makeApi();
-    render(<VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />);
+    renderEnglish(
+      <VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />,
+    );
     await screen.findByText("{count}");
     await user.click(screen.getByRole("button", { name: "New variable" }));
     await user.type(
@@ -102,7 +111,9 @@ describe("variable library", () => {
         undo: { operationId: "u", expiresAt: Date.now() + 10_000 },
       });
     const api = makeApi({ saveVariableDefinition: save });
-    render(<VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />);
+    renderEnglish(
+      <VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />,
+    );
     await screen.findByText("{count}");
     await user.click(screen.getByRole("button", { name: "Edit count" }));
     const input = screen.getByRole("textbox", { name: "Variable name" });
@@ -129,7 +140,9 @@ describe("variable library", () => {
   it("rejects braces, control characters, and more than 40 Unicode scalars", async () => {
     const user = userEvent.setup();
     const api = makeApi();
-    render(<VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />);
+    renderEnglish(
+      <VariableLibrary api={api} gameId="game" onUndoReceipt={vi.fn()} />,
+    );
     await screen.findByText("{count}");
     await user.click(screen.getByRole("button", { name: "New variable" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Variable name" }), {
@@ -138,5 +151,35 @@ describe("variable library", () => {
     await user.click(screen.getByRole("button", { name: "Save variable" }));
     expect(screen.getByRole("alert").textContent).toContain("braces");
     expect(api.saveVariableDefinition).not.toHaveBeenCalled();
+  });
+
+  it("translates rename impact, validation, and destructive accessibility copy", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn().mockResolvedValue({
+      status: "rename_confirmation_required",
+      affectedPhraseCount: 3,
+      affectedTokenCount: 5,
+    });
+    render(
+      <AppProviders i18n={createPartyPasteI18n("zh-TW")}>
+        <VariableLibrary
+          api={makeApi({ saveVariableDefinition: save })}
+          gameId="game"
+          onUndoReceipt={vi.fn()}
+        />
+      </AppProviders>,
+    );
+    await screen.findByText("{count}");
+    expect(screen.getByRole("button", { name: "編輯 count" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "編輯 count" }));
+    const name = screen.getByRole("textbox", { name: "變數名稱" });
+    await user.clear(name);
+    await user.type(name, "players");
+    await user.click(screen.getByRole("button", { name: "儲存變數" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "確認變數重新命名",
+    });
+    expect(dialog.textContent).toContain("3 個片語");
+    expect(dialog.textContent).toContain("5 個標記");
   });
 });

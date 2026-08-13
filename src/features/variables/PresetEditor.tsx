@@ -1,5 +1,6 @@
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 
@@ -24,6 +25,7 @@ function reindex(presets: readonly EditablePreset[]) {
 }
 
 export function PresetEditor({ onChange, presets }: PresetEditorProps) {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const ordered = [...presets].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -37,11 +39,11 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
   function add() {
     const normalized = value.trim().normalize("NFKC");
     if (!normalized) {
-      setError("Preset value is required.");
+      setError(t("manager.presetRequired"));
       return;
     }
     if (Array.from(normalized).length > 200) {
-      setError("Preset values must be 200 Unicode characters or fewer.");
+      setError(t("manager.presetTooLong"));
       return;
     }
     onChange(
@@ -55,7 +57,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
   }
   return (
     <fieldset className="pp-preset-editor">
-      <legend>Common values</legend>
+      <legend>{t("manager.commonValues")}</legend>
       <ul>
         {ordered.map((preset, index) => (
           <li key={preset.id}>
@@ -63,7 +65,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
               <GripVertical size={14} />
             </span>
             <input
-              aria-label={`Preset ${index + 1}`}
+              aria-label={t("manager.presetLabel", { number: index + 1 })}
               onChange={(event) => {
                 const next = [...ordered];
                 next[index] = { ...preset, value: event.target.value };
@@ -72,7 +74,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
               value={preset.value}
             />
             <button
-              aria-label={`Move ${preset.value} up`}
+              aria-label={t("manager.movePresetUp", { value: preset.value })}
               disabled={index === 0}
               onClick={() => move(index, -1)}
               type="button"
@@ -80,7 +82,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
               ↑
             </button>
             <button
-              aria-label={`Move ${preset.value} down`}
+              aria-label={t("manager.movePresetDown", { value: preset.value })}
               disabled={index === ordered.length - 1}
               onClick={() => move(index, 1)}
               type="button"
@@ -89,7 +91,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
             </button>
             <IconButton
               icon={<Trash2 size={14} />}
-              label={`Remove ${preset.value}`}
+              label={t("manager.removePreset", { value: preset.value })}
               onClick={() =>
                 onChange(reindex(ordered.filter(({ id }) => id !== preset.id)))
               }
@@ -99,9 +101,9 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
       </ul>
       <div className="pp-preset-editor__add">
         <label>
-          <span className="pp-visually-hidden">New preset</span>
+          <span className="pp-visually-hidden">{t("manager.newPreset")}</span>
           <input
-            aria-label="New preset"
+            aria-label={t("manager.newPreset")}
             onChange={(event) => setValue(event.target.value)}
             value={value}
           />
@@ -111,7 +113,7 @@ export function PresetEditor({ onChange, presets }: PresetEditorProps) {
           onClick={add}
           variant="secondary"
         >
-          Add preset
+          {t("manager.addPreset")}
         </Button>
       </div>
       {error ? (
