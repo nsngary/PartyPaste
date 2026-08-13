@@ -16,8 +16,8 @@ if (-not (Test-Path -LiteralPath $outputPath -PathType Container)) {
 }
 
 $expectedNames = @($contract.InstallerName, $contract.PortableName) | Sort-Object
-$actualNames = @(Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Name -ne $contract.ManifestName } | Sort-Object Name | ForEach-Object Name)
-if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
+$actualNames = @(Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Name -cne $contract.ManifestName } | Sort-Object Name | ForEach-Object Name)
+if (-not ($actualNames -join "`n").Equals(($expectedNames -join "`n"), [StringComparison]::Ordinal)) {
     throw "Expected exactly the current x64 installer and portable ZIP. Actual: $($actualNames -join ', ')."
 }
 

@@ -98,6 +98,41 @@ try {
     }
     if (-not (Test-Path -LiteralPath $aliasedInstaller -PathType Leaf)) { throw 'Aliased installer input was deleted.' }
 
+    $junctionTarget = Join-Path $testRoot 'junction-target'
+    [System.IO.Directory]::CreateDirectory($junctionTarget) | Out-Null
+    $junctionSource = Join-Path $junctionTarget $contract.InstallerName
+    Copy-Item -LiteralPath $applicationPath -Destination $junctionSource
+    $junctionSourceHash = (Get-FileHash -LiteralPath $junctionSource -Algorithm SHA256).Hash
+    $junctionOutput = Join-Path $testRoot 'junction-output'
+    New-Item -ItemType Junction -Path $junctionOutput -Target $junctionTarget | Out-Null
+    Assert-Throws -Name 'junction input/output alias' -Action {
+        & $packageScript -ApplicationExecutable $junctionSource -NsisInstaller $installerPath -OutputDirectory $junctionOutput
+    }
+    if (-not (Test-Path -LiteralPath $junctionSource -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $junctionSource -Algorithm SHA256).Hash -cne $junctionSourceHash) {
+        throw 'Junction alias guard did not preserve the source byte-for-byte.'
+    }
+
+    $symlinkTarget = Join-Path $testRoot 'symlink-target'
+    [System.IO.Directory]::CreateDirectory($symlinkTarget) | Out-Null
+    $symlinkSource = Join-Path $symlinkTarget $contract.InstallerName
+    Copy-Item -LiteralPath $applicationPath -Destination $symlinkSource
+    $symlinkSourceHash = (Get-FileHash -LiteralPath $symlinkSource -Algorithm SHA256).Hash
+    $symlinkOutput = Join-Path $testRoot 'symlink-output'
+    try {
+        New-Item -ItemType SymbolicLink -Path $symlinkOutput -Target $symlinkTarget -ErrorAction Stop | Out-Null
+        Assert-Throws -Name 'symlink input/output alias' -Action {
+            & $packageScript -ApplicationExecutable $symlinkSource -NsisInstaller $installerPath -OutputDirectory $symlinkOutput
+        }
+        if (-not (Test-Path -LiteralPath $symlinkSource -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $symlinkSource -Algorithm SHA256).Hash -cne $symlinkSourceHash) {
+            throw 'Symlink alias guard did not preserve the source byte-for-byte.'
+        }
+    }
+    catch [System.UnauthorizedAccessException] {
+        Write-Output 'SKIP: directory symlink creation denied by Windows privileges.'
+    }
+
     Assert-Throws -Name 'signed portable application' -Action {
         & $verifyScript -OutputDirectory $outputPath -SignatureStatusProvider {
             param($Path)
@@ -129,7 +164,37 @@ try {
     [System.IO.File]::WriteAllBytes((Join-Path $extraArtifactSet 'PartyPaste_9.9.9_windows-x64-portable-unsigned-local.zip'), [byte[]](1, 2, 3))
     Assert-Throws -Name 'hashing extra artifact' -Action { & $hashScript -OutputDirectory $extraArtifactSet }
 
-    Write-Output 'Packaging negative tests passed: identity, machine, version, signature, notices, aliases, Cargo metadata, manifest, and exact artifact set.'
+    $lowercaseSet = Copy-ArtifactSet -Name 'lowercase-filename'
+    $portableOriginal = Join-Path $lowercaseSet $contract.PortableName
+    $portableIntermediate = Join-Path $lowercaseSet 'portable-case-intermediate.zip'
+    $portableLowercase = Join-Path $lowercaseSet $contract.PortableName.ToLowerInvariant()
+    Move-Item -LiteralPath $portableOriginal -Destination $portableIntermediate
+    Move-Item -LiteralPath $portableIntermediate -Destination $portableLowercase
+    Assert-Throws -Name 'hashing lowercase filename variant' -Action { & $hashScript -OutputDirectory $lowercaseSet }
+    Assert-Throws -Name 'verifying lowercase filename variant' -Action { & $verifyScript -OutputDirectory $lowercaseSet }
+
+    $uppercaseSet = Copy-ArtifactSet -Name 'uppercase-extension'
+    $installerOriginal = Join-Path $uppercaseSet $contract.InstallerName
+    $installerIntermediate = Join-Path $uppercaseSet 'installer-case-intermediate.exe'
+    $installerUppercase = Join-Path $uppercaseSet ($contract.InstallerName.Substring(0, $contract.InstallerName.Length - 4) + '.EXE')
+    Move-Item -LiteralPath $installerOriginal -Destination $installerIntermediate
+    Move-Item -LiteralPath $installerIntermediate -Destination $installerUppercase
+    Assert-Throws -Name 'hashing uppercase extension variant' -Action { & $hashScript -OutputDirectory $uppercaseSet }
+    Assert-Throws -Name 'verifying uppercase extension variant' -Action { & $verifyScript -OutputDirectory $uppercaseSet }
+
+    $uppercaseHashSet = Copy-ArtifactSet -Name 'uppercase-manifest-hash'
+    $uppercaseHashManifest = Join-Path $uppercaseHashSet $contract.ManifestName
+    $uppercaseHashText = [System.IO.File]::ReadAllText($uppercaseHashManifest, [Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($uppercaseHashManifest, $uppercaseHashText.Substring(0, 64).ToUpperInvariant() + $uppercaseHashText.Substring(64), [Text.UTF8Encoding]::new($false))
+    Assert-Throws -Name 'uppercase manifest hash' -Action { & $verifyScript -OutputDirectory $uppercaseHashSet }
+
+    $uppercaseNameSet = Copy-ArtifactSet -Name 'uppercase-manifest-name'
+    $uppercaseNameManifest = Join-Path $uppercaseNameSet $contract.ManifestName
+    $uppercaseNameText = [System.IO.File]::ReadAllText($uppercaseNameManifest, [Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($uppercaseNameManifest, $uppercaseNameText.Replace('PartyPaste_', 'PARTYPASTE_'), [Text.UTF8Encoding]::new($false))
+    Assert-Throws -Name 'uppercase manifest artifact name' -Action { & $verifyScript -OutputDirectory $uppercaseNameSet }
+
+    Write-Output 'Packaging negative tests passed: identity, machine, version, signature, notices, direct/reparse aliases, Cargo metadata, manifest, casing, and exact artifact set.'
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

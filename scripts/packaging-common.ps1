@@ -2,6 +2,68 @@ Set-StrictMode -Version Latest
 
 $script:PartyPasteBuildNotice = "Unsigned local self-use build.`nOnline updates are deferred.`n"
 
+if ($null -eq ('PartyPastePackaging.NativePath' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace PartyPastePackaging {
+    public static class NativePath {
+        private const uint OpenExisting = 3;
+        private const uint BackupSemantics = 0x02000000;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            FileShare shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle file,
+            StringBuilder path,
+            uint pathLength,
+            uint flags);
+
+        public static string Resolve(string path) {
+            using (SafeFileHandle handle = CreateFileW(
+                path,
+                0,
+                FileShare.Read | FileShare.Write | FileShare.Delete,
+                IntPtr.Zero,
+                OpenExisting,
+                BackupSemantics,
+                IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                var buffer = new StringBuilder(512);
+                uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (length >= buffer.Capacity) {
+                    buffer = new StringBuilder((int)length + 1);
+                    length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                    if (length == 0 || length >= buffer.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                string resolved = buffer.ToString();
+                if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                    return @"\\" + resolved.Substring(8);
+                if (resolved.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                    return resolved.Substring(4);
+                return resolved;
+            }
+        }
+    }
+}
+'@
+}
+
 function Get-PartyPastePackageContract {
     param([Parameter(Mandatory)] [string]$RepoRoot)
 
@@ -17,7 +79,7 @@ function Get-PartyPastePackageContract {
         @([string]$package.version, [string]$tauri.version, $cargoVersion.Groups['version'].Value) |
             Select-Object -Unique
     )
-    if ($versions.Count -ne 1 -or $versions[0] -notmatch '^\d+\.\d+\.\d+$') {
+    if ($versions.Count -ne 1 -or $versions[0] -cnotmatch '^\d+\.\d+\.\d+$') {
         throw "Package version metadata is malformed or inconsistent: $($versions -join ', ')"
     }
     $version = $versions[0]
@@ -32,7 +94,7 @@ function Get-PartyPastePackageContract {
 
 function ConvertTo-PartyPasteWindowsVersion {
     param([Parameter(Mandatory)] [string]$Version)
-    if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+    if ($Version -cnotmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
         throw "Windows file version is malformed: $Version"
     }
     $parsed = [Version]$Version
@@ -74,16 +136,41 @@ function Test-PartyPastePeIdentity {
     $info = (Get-Item -LiteralPath $Path).VersionInfo
     $identityFields = @($info.ProductName, $info.FileDescription, $info.InternalName) |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    if ($identityFields.Count -eq 0 -or @($identityFields | Where-Object { $_ -ne 'PartyPaste' }).Count -gt 0) {
+    if ($identityFields.Count -eq 0 -or @($identityFields | Where-Object { -not $_.Equals('PartyPaste', [StringComparison]::Ordinal) }).Count -gt 0) {
         throw "$Label does not identify PartyPaste in its Windows version metadata."
     }
     $expectedNormalized = ConvertTo-PartyPasteWindowsVersion -Version $ExpectedVersion
     foreach ($field in @('ProductVersion', 'FileVersion')) {
         $actual = [string]$info.$field
-        if ((ConvertTo-PartyPasteWindowsVersion -Version $actual) -ne $expectedNormalized) {
+        if (-not (ConvertTo-PartyPasteWindowsVersion -Version $actual).Equals($expectedNormalized, [StringComparison]::Ordinal)) {
             throw "$Label $field is $actual; expected $ExpectedVersion."
         }
     }
+}
+
+function Resolve-PartyPasteFinalPath {
+    param([Parameter(Mandatory)] [string]$Path)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $fullPath)) { throw "Path does not exist: $fullPath" }
+    [PartyPastePackaging.NativePath]::Resolve($fullPath).TrimEnd('\', '/')
+}
+
+function Resolve-PartyPasteFinalPathFromExistingAncestor {
+    param([Parameter(Mandatory)] [string]$Path)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $remaining = [System.Collections.Generic.Stack[string]]::new()
+    $cursor = $fullPath
+    while (-not (Test-Path -LiteralPath $cursor)) {
+        $leaf = [System.IO.Path]::GetFileName($cursor.TrimEnd('\', '/'))
+        if ([string]::IsNullOrEmpty($leaf)) { throw "No existing ancestor for path: $fullPath" }
+        $remaining.Push($leaf)
+        $parent = [System.IO.Path]::GetDirectoryName($cursor.TrimEnd('\', '/'))
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor) { throw "No existing ancestor for path: $fullPath" }
+        $cursor = $parent
+    }
+    $resolved = Resolve-PartyPasteFinalPath -Path $cursor
+    while ($remaining.Count -gt 0) { $resolved = Join-Path $resolved $remaining.Pop() }
+    [System.IO.Path]::GetFullPath($resolved).TrimEnd('\', '/')
 }
 
 function Test-PathWithinDirectory {

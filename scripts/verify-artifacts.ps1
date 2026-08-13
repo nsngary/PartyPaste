@@ -22,14 +22,14 @@ $expectedNames = @(
     $contract.ManifestName
 ) | Sort-Object
 $actualNames = @(Get-ChildItem -LiteralPath $outputPath -File | Sort-Object Name | ForEach-Object Name)
-if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
+if (-not ($actualNames -join "`n").Equals(($expectedNames -join "`n"), [StringComparison]::Ordinal)) {
     throw "Artifacts are missing or mislabeled. Expected: $($expectedNames -join ', '). Actual: $($actualNames -join ', ')."
 }
 
 $installerPath = Join-Path $outputPath $contract.InstallerName
 # Tauri's NSIS launcher is an x86 PE (0x014C) that installs the x64 PartyPaste payload.
 Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedVersion $version -Label 'NSIS installer'
-if ((& $SignatureStatusProvider $installerPath) -ne 'NotSigned') {
+if ((& $SignatureStatusProvider $installerPath) -cne 'NotSigned') {
     throw 'Installer is not an unsigned local build.'
 }
 
@@ -37,14 +37,14 @@ $manifestPath = Join-Path $outputPath $contract.ManifestName
 $manifestText = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8)
 $manifestParts = @($manifestText.Split("`n"))
 if ($manifestText.Contains("`r") -or $manifestParts.Count -ne 3 -or $manifestParts[2] -ne '' -or
-    $manifestParts[0] -notmatch '^[0-9a-f]{64}  [^\r\n]+$' -or
-    $manifestParts[1] -notmatch '^[0-9a-f]{64}  [^\r\n]+$') {
+    $manifestParts[0] -cnotmatch '^[0-9a-f]{64}  [^\r\n]+$' -or
+    $manifestParts[1] -cnotmatch '^[0-9a-f]{64}  [^\r\n]+$') {
     throw 'SHA256SUMS.txt must contain exactly two nonempty LF-terminated artifact lines.'
 }
 $manifestLines = @($manifestParts[0], $manifestParts[1])
 $manifestArtifactNames = @()
 foreach ($line in $manifestLines) {
-    if ($line -notmatch '^([0-9a-f]{64})  (PartyPaste_.+_windows-x64-(?:setup|portable)-unsigned-local\.(?:exe|zip))$') {
+    if ($line -cnotmatch '^([0-9a-f]{64})  (PartyPaste_.+_windows-x64-(?:setup|portable)-unsigned-local\.(?:exe|zip))$') {
         throw "Malformed SHA-256 manifest entry: $line"
     }
     $expectedHash = $Matches[1]
@@ -52,7 +52,7 @@ foreach ($line in $manifestLines) {
     $manifestArtifactNames += $artifactName
     $artifactPath = Join-Path $outputPath $artifactName
     $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualHash -ne $expectedHash) {
+    if (-not $actualHash.Equals($expectedHash, [StringComparison]::Ordinal)) {
         throw "SHA-256 mismatch for $artifactName."
     }
 }
@@ -61,7 +61,7 @@ $expectedHashedNames = @(
     $contract.InstallerName
 ) | Sort-Object
 $sortedManifestArtifactNames = @($manifestArtifactNames | Sort-Object)
-if (($sortedManifestArtifactNames -join "`n") -ne ($expectedHashedNames -join "`n")) {
+if (-not ($sortedManifestArtifactNames -join "`n").Equals(($expectedHashedNames -join "`n"), [StringComparison]::Ordinal)) {
     throw 'SHA256SUMS.txt does not cover each expected artifact exactly once.'
 }
 
@@ -73,7 +73,7 @@ $portableTempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("partypaste-ver
 try {
     $entryNames = @($archive.Entries | ForEach-Object FullName | Sort-Object)
     $expectedEntries = @('BUILD-NOTICE.txt', 'data/', 'partypaste.portable', 'PartyPaste.exe', 'THIRD_PARTY_NOTICES.md') | Sort-Object
-    if (($entryNames -join "`n") -ne ($expectedEntries -join "`n")) {
+    if (-not ($entryNames -join "`n").Equals(($expectedEntries -join "`n"), [StringComparison]::Ordinal)) {
         throw "Portable ZIP contents are missing or unexpected: $($entryNames -join ', ')"
     }
     $marker = $archive.GetEntry('partypaste.portable')
@@ -89,7 +89,7 @@ try {
     $portableExe = $archive.GetEntry('PartyPaste.exe')
     [System.IO.Compression.ZipFileExtensions]::ExtractToFile($portableExe, $portableTempPath, $true)
     Test-PartyPastePeIdentity -Path $portableTempPath -ExpectedMachine 0x8664 -ExpectedVersion $version -Label 'Portable application'
-    if ((& $SignatureStatusProvider $portableTempPath) -ne 'NotSigned') {
+    if ((& $SignatureStatusProvider $portableTempPath) -cne 'NotSigned') {
         throw 'Portable application is not an unsigned local build.'
     }
     $noticeStream = $notices.Open()

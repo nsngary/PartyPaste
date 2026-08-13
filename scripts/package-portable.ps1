@@ -15,7 +15,7 @@ $contract = Get-PartyPastePackageContract -RepoRoot $repoRoot
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = $contract.Version
 }
-if ($Version -ne $contract.Version) {
+if (-not $Version.Equals($contract.Version, [StringComparison]::Ordinal)) {
     throw "Package version must match repository metadata: $($contract.Version)"
 }
 
@@ -39,10 +39,13 @@ foreach ($required in @($sourceExePath, $nsisInstallerPath, $noticesPath)) {
         throw "Required packaging input is missing: $required"
     }
 }
-if (Test-PathWithinDirectory -Path $sourceExePath -Directory $outputPath) {
+$finalSourceExePath = Resolve-PartyPasteFinalPath -Path $sourceExePath
+$finalNsisInstallerPath = Resolve-PartyPasteFinalPath -Path $nsisInstallerPath
+$finalOutputPath = Resolve-PartyPasteFinalPathFromExistingAncestor -Path $outputPath
+if (Test-PathWithinDirectory -Path $finalSourceExePath -Directory $finalOutputPath) {
     throw 'ApplicationExecutable must be outside OutputDirectory.'
 }
-if (Test-PathWithinDirectory -Path $nsisInstallerPath -Directory $outputPath) {
+if (Test-PathWithinDirectory -Path $finalNsisInstallerPath -Directory $finalOutputPath) {
     throw 'NsisInstaller must be outside OutputDirectory.'
 }
 
@@ -53,8 +56,8 @@ $portablePath = Join-Path $outputPath $portableName
 $installerPath = Join-Path $outputPath $installerName
 
 Get-ChildItem -LiteralPath $outputPath -File | Where-Object {
-    $_.Name -match '^PartyPaste_.+_windows-x64-(setup|portable)-unsigned-local\.(exe|zip)$' -or
-    $_.Name -eq 'SHA256SUMS.txt'
+    $_.Name -cmatch '^PartyPaste_.+_windows-x64-(setup|portable)-unsigned-local\.(exe|zip)$' -or
+    $_.Name -ceq 'SHA256SUMS.txt'
 } | Remove-Item -Force
 
 foreach ($target in @($portablePath, $installerPath)) {
