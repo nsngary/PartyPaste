@@ -4,7 +4,7 @@ import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import type { GameDto } from "./library-api";
 
-export type ManagerSection = "phrases" | "variables";
+export type ManagerSection = "phrases" | "variables" | "settings";
 export interface GameSidebarProps {
   games: readonly GameDto[];
   onCreateGame: () => void;
@@ -57,6 +57,13 @@ export function GameSidebar({
           type="button"
         >
           {t("manager.variables")}
+        </button>
+        <button
+          aria-current={section === "settings" ? "page" : undefined}
+          onClick={() => onSelectSection("settings")}
+          type="button"
+        >
+          {t("settings.title")}
         </button>
       </nav>
       <div className="pp-game-sidebar__heading">

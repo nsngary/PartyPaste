@@ -7,6 +7,7 @@ import { Drawer } from "../../components/Drawer";
 import { Field } from "../../components/Field";
 import { parseTemplate } from "../../domain/template";
 import { validateGameName, validateGroupName } from "../../domain/validation";
+import { SettingsPage } from "../settings/SettingsPage";
 import {
   VariableLibrary,
   type VariableLibraryApi,
@@ -102,6 +103,7 @@ export interface ManagerLibraryApi extends VariableLibraryApi {
 
 export interface ManagerAppProps {
   libraryApi: ManagerLibraryApi;
+  subscribeToOpenUpdateSettings?: (handler: () => void) => Promise<() => void>;
 }
 type NameDialog =
   | { kind: "game"; item: GameDto | null }
@@ -135,7 +137,10 @@ function mergeVisibleOrder(
   return allIds.map((id) => (visible.has(id) ? visibleIds[index++] : id));
 }
 
-export function ManagerApp({ libraryApi }: ManagerAppProps) {
+export function ManagerApp({
+  libraryApi,
+  subscribeToOpenUpdateSettings,
+}: ManagerAppProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const width = useWindowWidth();
@@ -167,6 +172,22 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
   const [undo, setUndo] = useState<UndoReceipt | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!subscribeToOpenUpdateSettings) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void subscribeToOpenUpdateSettings(() => setSection("settings"))
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [subscribeToOpenUpdateSettings]);
 
   useEffect(() => {
     if (!selectedGameId && library?.games[0])
@@ -388,7 +409,9 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
   const selectedGame =
     library.games.find(({ id }) => id === selectedGameId) ?? null;
   return (
-    <main className="pp-manager">
+    <main
+      className={`pp-manager${section === "phrases" ? "" : " pp-manager--wide-content"}`}
+    >
       <GameSidebar
         games={library.games}
         onCreateGame={() => openNameDialog({ kind: "game", item: null })}
@@ -406,7 +429,9 @@ export function ManagerApp({ libraryApi }: ManagerAppProps) {
         selectedGameId={selectedGameId}
       />
       <section className="pp-manager__content">
-        {!selectedGame ? (
+        {section === "settings" ? (
+          <SettingsPage />
+        ) : !selectedGame ? (
           <div className="pp-manager__empty">
             <h1>{t("manager.noGames")}</h1>
             <Button

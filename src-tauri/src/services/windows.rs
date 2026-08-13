@@ -1,0 +1,434 @@
+use std::sync::{Mutex, MutexGuard};
+
+use serde::Serialize;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{TrayIcon, TrayIconBuilder};
+use tauri::{
+    App, AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, Runtime, State,
+    WindowEvent,
+};
+
+use crate::db::Repository;
+use crate::db::models::SettingRecord;
+use crate::error::AppError;
+
+pub const OVERLAY_TOPMOST_KEY: &str = "window_overlay_always_on_top";
+
+pub const fn default_overlay_topmost() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowKind {
+    Overlay,
+    Manager,
+}
+
+impl WindowKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay",
+            Self::Manager => "manager",
+        }
+    }
+
+    pub const fn default_size(self) -> (u32, u32) {
+        match self {
+            Self::Overlay => (300, 420),
+            Self::Manager => (1120, 720),
+        }
+    }
+
+    pub const fn minimum_size(self) -> (u32, u32) {
+        match self {
+            Self::Overlay => (240, 160),
+            Self::Manager => (760, 560),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LifecycleEvent {
+    CloseRequested(WindowKind),
+    ShowOverlay,
+    HideOverlay,
+    ToggleOverlay { visible: bool },
+    OpenManager,
+    CheckForUpdates,
+    SecondInstance,
+    SetOverlayTopmost(bool),
+    ExplicitQuit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LifecycleEffect {
+    Show(WindowKind),
+    Hide(WindowKind),
+    Unminimize(WindowKind),
+    Focus(WindowKind),
+    EmitUpdateCheck,
+    SetTopmost(WindowKind, bool),
+    PersistTopmost(bool),
+    Exit,
+}
+
+pub fn lifecycle_effects(event: LifecycleEvent) -> Vec<LifecycleEffect> {
+    match event {
+        LifecycleEvent::CloseRequested(window) => vec![LifecycleEffect::Hide(window)],
+        LifecycleEvent::ShowOverlay => vec![
+            LifecycleEffect::Show(WindowKind::Overlay),
+            LifecycleEffect::Focus(WindowKind::Overlay),
+        ],
+        LifecycleEvent::HideOverlay => vec![LifecycleEffect::Hide(WindowKind::Overlay)],
+        LifecycleEvent::ToggleOverlay { visible: true } => {
+            vec![LifecycleEffect::Hide(WindowKind::Overlay)]
+        }
+        LifecycleEvent::ToggleOverlay { visible: false } => vec![
+            LifecycleEffect::Show(WindowKind::Overlay),
+            LifecycleEffect::Focus(WindowKind::Overlay),
+        ],
+        LifecycleEvent::OpenManager | LifecycleEvent::SecondInstance => vec![
+            LifecycleEffect::Show(WindowKind::Manager),
+            LifecycleEffect::Unminimize(WindowKind::Manager),
+            LifecycleEffect::Focus(WindowKind::Manager),
+        ],
+        LifecycleEvent::CheckForUpdates => vec![
+            LifecycleEffect::Show(WindowKind::Manager),
+            LifecycleEffect::Unminimize(WindowKind::Manager),
+            LifecycleEffect::Focus(WindowKind::Manager),
+            LifecycleEffect::EmitUpdateCheck,
+        ],
+        LifecycleEvent::SetOverlayTopmost(enabled) => vec![
+            LifecycleEffect::SetTopmost(WindowKind::Overlay, enabled),
+            LifecycleEffect::PersistTopmost(enabled),
+        ],
+        LifecycleEvent::ExplicitQuit => vec![LifecycleEffect::Exit],
+    }
+}
+
+pub fn tray_action(id: &str) -> Option<LifecycleEvent> {
+    match id {
+        "show_overlay" => Some(LifecycleEvent::ShowOverlay),
+        "hide_overlay" => Some(LifecycleEvent::HideOverlay),
+        "open_manager" => Some(LifecycleEvent::OpenManager),
+        "check_updates" => Some(LifecycleEvent::CheckForUpdates),
+        "quit" => Some(LifecycleEvent::ExplicitQuit),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Bounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Monitor {
+    pub work_area: Bounds,
+}
+
+pub fn clamp_bounds(saved: Bounds, monitors: &[Monitor], minimum: (u32, u32)) -> Bounds {
+    let Some(monitor) = nearest_monitor(saved, monitors) else {
+        return saved;
+    };
+    let work = monitor.work_area;
+    let width = saved.width.max(minimum.0).min(work.width);
+    let height = saved.height.max(minimum.1).min(work.height);
+    let max_x = i64::from(work.x) + i64::from(work.width.saturating_sub(width));
+    let max_y = i64::from(work.y) + i64::from(work.height.saturating_sub(height));
+    Bounds {
+        x: i64::from(saved.x).clamp(i64::from(work.x), max_x) as i32,
+        y: i64::from(saved.y).clamp(i64::from(work.y), max_y) as i32,
+        width,
+        height,
+    }
+}
+
+fn nearest_monitor(saved: Bounds, monitors: &[Monitor]) -> Option<&Monitor> {
+    monitors.iter().max_by_key(|monitor| {
+        let work = monitor.work_area;
+        let left = i64::from(saved.x).max(i64::from(work.x));
+        let top = i64::from(saved.y).max(i64::from(work.y));
+        let right = (i64::from(saved.x) + i64::from(saved.width))
+            .min(i64::from(work.x) + i64::from(work.width));
+        let bottom = (i64::from(saved.y) + i64::from(saved.height))
+            .min(i64::from(work.y) + i64::from(work.height));
+        let intersection = (right - left).max(0) * (bottom - top).max(0);
+        if intersection > 0 {
+            return (1_i64, intersection, 0_i64);
+        }
+        let saved_center_x = i64::from(saved.x) * 2 + i64::from(saved.width);
+        let saved_center_y = i64::from(saved.y) * 2 + i64::from(saved.height);
+        let work_center_x = i64::from(work.x) * 2 + i64::from(work.width);
+        let work_center_y = i64::from(work.y) * 2 + i64::from(work.height);
+        let distance =
+            (saved_center_x - work_center_x).pow(2) + (saved_center_y - work_center_y).pow(2);
+        (0_i64, 0_i64, -distance)
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSettingsDto {
+    pub always_on_top: bool,
+}
+
+pub struct WindowServiceState(Mutex<Repository>);
+
+impl WindowServiceState {
+    pub fn new(repository: Repository) -> Self {
+        Self(Mutex::new(repository))
+    }
+
+    fn lock(&self) -> Result<MutexGuard<'_, Repository>, AppError> {
+        self.0.lock().map_err(|_| AppError::Internal {
+            message_key: "errors.internal",
+        })
+    }
+
+    pub fn settings(&self) -> Result<WindowSettingsDto, AppError> {
+        let repository = self.lock()?;
+        let always_on_top = repository
+            .snapshot()
+            .map_err(|_| AppError::Database {
+                message_key: "errors.database",
+            })?
+            .settings
+            .iter()
+            .find(|setting| setting.key == OVERLAY_TOPMOST_KEY)
+            .map_or_else(default_overlay_topmost, |setting| setting.value == "true");
+        Ok(WindowSettingsDto { always_on_top })
+    }
+
+    fn persist_topmost(&self, enabled: bool) -> Result<(), AppError> {
+        self.lock()?
+            .transaction(|tx| {
+                tx.upsert_setting(&SettingRecord {
+                    key: OVERLAY_TOPMOST_KEY.into(),
+                    value: enabled.to_string(),
+                })
+            })
+            .map_err(|_| AppError::Database {
+                message_key: "errors.database",
+            })
+    }
+}
+
+pub struct TrayState<R: Runtime> {
+    _tray: TrayIcon<R>,
+}
+
+pub fn apply_lifecycle<R: Runtime>(app: &AppHandle<R>, event: LifecycleEvent) {
+    for effect in lifecycle_effects(event) {
+        match effect {
+            LifecycleEffect::Show(window) => {
+                if let Some(window) = app.get_webview_window(window.label()) {
+                    let _ = window.show();
+                }
+            }
+            LifecycleEffect::Hide(window) => {
+                if let Some(window) = app.get_webview_window(window.label()) {
+                    let _ = window.hide();
+                }
+            }
+            LifecycleEffect::Unminimize(window) => {
+                if let Some(window) = app.get_webview_window(window.label()) {
+                    let _ = window.unminimize();
+                }
+            }
+            LifecycleEffect::Focus(window) => {
+                if let Some(window) = app.get_webview_window(window.label()) {
+                    let _ = window.set_focus();
+                }
+            }
+            LifecycleEffect::EmitUpdateCheck => {
+                let _ = app.emit_to("manager", "open-update-settings", ());
+            }
+            LifecycleEffect::SetTopmost(window, enabled) => {
+                if let Some(window) = app.get_webview_window(window.label()) {
+                    let _ = window.set_always_on_top(enabled);
+                }
+            }
+            LifecycleEffect::Exit => app.exit(0),
+            LifecycleEffect::PersistTopmost(_) => {}
+        }
+    }
+}
+
+pub fn toggle_overlay<R: Runtime>(app: &AppHandle<R>) {
+    let visible = app
+        .get_webview_window(WindowKind::Overlay.label())
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    apply_lifecycle(app, LifecycleEvent::ToggleOverlay { visible });
+}
+
+pub fn install_window_lifecycle<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
+    for kind in [WindowKind::Overlay, WindowKind::Manager] {
+        if let Some(window) = app.get_webview_window(kind.label()) {
+            let close_window = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = close_window.hide();
+                }
+            });
+        }
+    }
+    recover_window_bounds(app.handle())
+}
+
+pub fn recover_window_bounds<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    for kind in [WindowKind::Overlay, WindowKind::Manager] {
+        let Some(window) = app.get_webview_window(kind.label()) else {
+            continue;
+        };
+        let monitors = window
+            .available_monitors()?
+            .into_iter()
+            .map(|monitor| {
+                let area = monitor.work_area();
+                Monitor {
+                    work_area: Bounds {
+                        x: area.position.x,
+                        y: area.position.y,
+                        width: area.size.width,
+                        height: area.size.height,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let position = window.outer_position()?;
+        let size = window.outer_size()?;
+        let scale = window.scale_factor()?;
+        let minimum = kind.minimum_size();
+        let minimum = (
+            (f64::from(minimum.0) * scale).round() as u32,
+            (f64::from(minimum.1) * scale).round() as u32,
+        );
+        let recovered = clamp_bounds(
+            Bounds {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            },
+            &monitors,
+            minimum,
+        );
+        window.set_size(PhysicalSize::new(recovered.width, recovered.height))?;
+        window.set_position(PhysicalPosition::new(recovered.x, recovered.y))?;
+    }
+    Ok(())
+}
+
+pub fn schedule_bounds_recovery<R: Runtime>(app: &App<R>) {
+    for window in app.webview_windows().into_values() {
+        let app_handle = app.handle().clone();
+        window.once("tauri://page-load", move |_| {
+            let _ = recover_window_bounds(&app_handle);
+        });
+    }
+}
+
+pub fn create_tray<R: Runtime>(app: &App<R>) -> tauri::Result<TrayState<R>> {
+    let show = MenuItem::with_id(
+        app,
+        "show_overlay",
+        "顯示浮動視窗 / Show Overlay",
+        true,
+        None::<&str>,
+    )?;
+    let hide = MenuItem::with_id(
+        app,
+        "hide_overlay",
+        "隱藏浮動視窗 / Hide Overlay",
+        true,
+        None::<&str>,
+    )?;
+    let manager = MenuItem::with_id(
+        app,
+        "open_manager",
+        "開啟管理器 / Open Manager",
+        true,
+        None::<&str>,
+    )?;
+    let updates = MenuItem::with_id(
+        app,
+        "check_updates",
+        "檢查更新 / Check for Updates",
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "結束 PartyPaste / Quit", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show, &hide, &manager, &updates, &separator, &quit])?;
+    let mut builder = TrayIconBuilder::new()
+        .menu(&menu)
+        .tooltip("PartyPaste")
+        .on_menu_event(|app, event| {
+            if let Some(action) = tray_action(event.id().as_ref()) {
+                apply_lifecycle(app, action);
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    Ok(TrayState {
+        _tray: builder.build(app)?,
+    })
+}
+
+#[tauri::command]
+pub fn show_overlay(app: AppHandle) {
+    apply_lifecycle(&app, LifecycleEvent::ShowOverlay);
+}
+
+#[tauri::command]
+pub fn hide_overlay(app: AppHandle) {
+    apply_lifecycle(&app, LifecycleEvent::HideOverlay);
+}
+
+#[tauri::command]
+pub fn open_manager(app: AppHandle) {
+    apply_lifecycle(&app, LifecycleEvent::OpenManager);
+}
+
+#[tauri::command]
+pub fn get_window_settings(
+    state: State<'_, WindowServiceState>,
+) -> Result<WindowSettingsDto, AppError> {
+    state.settings()
+}
+
+#[tauri::command]
+pub fn toggle_topmost(
+    app: AppHandle,
+    state: State<'_, WindowServiceState>,
+    always_on_top: bool,
+) -> Result<bool, AppError> {
+    let overlay =
+        app.get_webview_window(WindowKind::Overlay.label())
+            .ok_or(AppError::Internal {
+                message_key: "errors.internal",
+            })?;
+    let previous = overlay.is_always_on_top().unwrap_or(!always_on_top);
+    overlay
+        .set_always_on_top(always_on_top)
+        .map_err(|_| AppError::Internal {
+            message_key: "errors.internal",
+        })?;
+    if let Err(error) = state.persist_topmost(always_on_top) {
+        let _ = overlay.set_always_on_top(previous);
+        return Err(error);
+    }
+    Ok(always_on_top)
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    apply_lifecycle(&app, LifecycleEvent::ExplicitQuit);
+}

@@ -33,7 +33,7 @@
 
 .pp-game-sidebar nav {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   border-bottom: 1px solid var(--border-subtle);
 }
 .pp-game-sidebar nav button {
@@ -312,6 +312,89 @@
 .pp-variable-library {
   padding: var(--space-5);
 }
+
+.pp-settings {
+  width: min(46rem, 100%);
+  padding: var(--space-5);
+}
+.pp-settings__header {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-strong);
+}
+.pp-settings__header h1,
+.pp-settings__section h2,
+.pp-backup-preview h3 {
+  margin: 0;
+}
+.pp-settings__header h1 {
+  font-size: 1.25rem;
+}
+.pp-settings__section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.pp-settings__section h2 {
+  font-size: 1rem;
+}
+.pp-settings__section > p,
+.pp-settings__row p,
+.pp-settings__checkbox span span,
+.pp-about-list dt {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.pp-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.pp-settings__checkbox {
+  display: flex;
+  width: fit-content;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.pp-settings__checkbox input {
+  margin-top: 3px;
+}
+.pp-settings__checkbox > span {
+  display: grid;
+  gap: 2px;
+}
+.pp-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.pp-shortcut-input {
+  font-family: "IBM Plex Mono", monospace;
+}
+.pp-backup-preview {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) 0 0 var(--space-3);
+  border-left: 2px solid var(--border-strong);
+}
+.pp-backup-preview h3 {
+  font-size: 0.9375rem;
+}
+.pp-about-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+.pp-about-list div {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.pp-about-list dd {
+  margin: 0;
+}
 .pp-variable-library > header {
   display: flex;
   align-items: center;
@@ -400,6 +483,9 @@
 @media (min-width: 1000px) {
   .pp-manager {
     grid-template-columns: 248px minmax(440px, 1fr) 320px;
+  }
+  .pp-manager.pp-manager--wide-content {
+    grid-template-columns: 248px minmax(0, 1fr);
   }
 }
 

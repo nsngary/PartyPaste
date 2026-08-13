@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { createRoot } from "react-dom/client";
 import { createLibraryApi } from "../features/library/library-api";
 import { ManagerApp } from "../features/library/ManagerApp";
@@ -13,6 +14,12 @@ if (!root) {
 
 createRoot(root).render(
   <PartyPasteProviders>
-    <ManagerApp libraryApi={createLibraryApi()} />
+    <ManagerApp
+      libraryApi={createLibraryApi()}
+      subscribeToOpenUpdateSettings={async (handler) => {
+        const unlisten = await listen("open-update-settings", handler);
+        return unlisten;
+      }}
+    />
   </PartyPasteProviders>,
 );

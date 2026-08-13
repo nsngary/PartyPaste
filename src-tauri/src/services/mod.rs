@@ -4,3 +4,4 @@ pub mod library;
 pub mod session;
 pub mod shortcuts;
 pub mod templates;
+pub mod windows;

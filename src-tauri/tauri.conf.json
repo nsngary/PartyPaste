@@ -18,7 +18,8 @@
         "width": 1120,
         "height": 720,
         "minWidth": 760,
-        "minHeight": 560
+        "minHeight": 560,
+        "alwaysOnTop": false
       },
       {
         "label": "overlay",
@@ -27,7 +28,8 @@
         "width": 300,
         "height": 420,
         "minWidth": 240,
-        "minHeight": 160
+        "minHeight": 160,
+        "alwaysOnTop": true
       }
     ]
   }
