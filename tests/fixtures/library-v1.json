@@ -1,0 +1,107 @@
+{
+  "games": [
+    {
+      "id": "game-maple",
+      "name": "楓之谷",
+      "sortOrder": 0,
+      "overlayDisplayMode": "title"
+    },
+    {
+      "id": "game-raid",
+      "name": "Raid Night",
+      "sortOrder": 1,
+      "overlayDisplayMode": "full"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group-trade",
+      "gameId": "game-maple",
+      "name": "交易",
+      "collapsed": false,
+      "sortOrder": 0
+    },
+    {
+      "id": "group-party",
+      "gameId": "game-maple",
+      "name": "組隊",
+      "collapsed": false,
+      "sortOrder": 1
+    }
+  ],
+  "phrases": [
+    {
+      "id": "phrase-buy",
+      "groupId": "group-trade",
+      "title": "收購卷軸",
+      "bodyTemplate": "收購 {物品}，預算 {價格}",
+      "favorite": true,
+      "favoriteOrder": 0,
+      "hotkey": "Ctrl+Alt+1",
+      "sortOrder": 0
+    },
+    {
+      "id": "phrase-thanks",
+      "groupId": "group-trade",
+      "title": "謝謝交易",
+      "bodyTemplate": "謝謝，祝遊戲愉快！",
+      "favorite": false,
+      "favoriteOrder": null,
+      "hotkey": null,
+      "sortOrder": 1
+    },
+    {
+      "id": "phrase-party",
+      "groupId": "group-party",
+      "title": "徵求隊友",
+      "bodyTemplate": "徵求 {職業} 一名",
+      "favorite": false,
+      "favoriteOrder": null,
+      "hotkey": null,
+      "sortOrder": 0
+    }
+  ],
+  "variableDefinitions": [
+    {
+      "id": "var-item",
+      "gameId": "game-maple",
+      "name": "物品",
+      "normalizedName": "物品",
+      "sortOrder": 0
+    },
+    {
+      "id": "var-price",
+      "gameId": "game-maple",
+      "name": "價格",
+      "normalizedName": "價格",
+      "sortOrder": 1
+    }
+  ],
+  "variablePresets": [
+    {
+      "id": "preset-item",
+      "variableDefinitionId": "var-item",
+      "value": "混沌卷軸",
+      "sortOrder": 0
+    },
+    {
+      "id": "preset-price",
+      "variableDefinitionId": "var-price",
+      "value": "5000萬",
+      "sortOrder": 0
+    }
+  ],
+  "phraseVariableRefs": [
+    {
+      "phraseId": "phrase-buy",
+      "variableDefinitionId": "var-item",
+      "tokenOrder": 0
+    },
+    {
+      "phraseId": "phrase-buy",
+      "variableDefinitionId": "var-price",
+      "tokenOrder": 1
+    }
+  ],
+  "settings": []
+}
