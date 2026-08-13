@@ -8,7 +8,7 @@ import { PartyPasteProviders } from "./providers";
 const root = document.getElementById("root");
 
 if (!root) {
-  throw new Error("Manager root element is missing.");
+  throw new Error("PARTYPASTE_MANAGER_ROOT_MISSING");
 }
 
 createRoot(root).render(

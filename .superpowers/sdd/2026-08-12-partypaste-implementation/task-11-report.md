@@ -73,3 +73,25 @@ Full regression:
 - Rust regression remains unnecessary because no native contract or Rust source changed.
 
 The first verification attempt exposed a required dnd-kit `onDragOver` announcement after replacing the library defaults with translated callbacks. The custom announcement set now satisfies the complete typed contract and the fresh verification above is green.
+
+## Formal review fix round 2: entrypoint and protected storage access
+
+- Replaced the pre-provider English Manager root failure with the language-neutral stable developer code `PARTYPASTE_MANAGER_ROOT_MISSING`.
+- Expanded the Task 11 copy source contract to cover `src/app/manager-main.tsx` and assert the exact failure code plus absence of the former English sentence.
+- Moved acquisition of `globalThis.localStorage` inside `try` blocks for both preference reads and writes. A throwing WebView/privacy getter now falls back to Traditional Chinese during initialization, while a runtime switch still completes even when persistence is unavailable.
+- The storage tests save and restore the original global property descriptor exactly.
+
+RED command (Node 24.15.0):
+
+`& 'C:\Users\USER\node-v22.21.1-win-x64\npx.cmd' --yes node@24.15.0 'C:\Users\USER\node-v22.21.1-win-x64\node_modules\npm\bin\npm-cli.js' test -- src/i18n/i18n.test.ts`
+
+- 1 file ran; 3 expected failures and 7 passes. The failures were the old root sentence and both throwing `localStorage` acquisition paths.
+
+GREEN and gates:
+
+- Same focused command: pass, 10/10 tests.
+- `npm test -- src/i18n src/features/library src/features/variables`: pass, 7 files / 57 tests.
+- `npm run verify`: pass; TypeScript, Biome, and 19 files / 126 tests.
+- `npm run build`: pass; production Vite build, 1,916 modules transformed.
+- `git diff --check`: pass before commit.
+- Rust regression remains unnecessary because no native contract or Rust source changed.

@@ -22,9 +22,9 @@ export function resolveLocale(locale?: string): SupportedLocale {
 }
 
 function persistedLocale(): SupportedLocale | undefined {
-  if (typeof localStorage === "undefined") return undefined;
   try {
-    const value = localStorage.getItem(localeStorageKey);
+    const storage = globalThis.localStorage;
+    const value = storage?.getItem(localeStorageKey);
     return supportedLocales.find((locale) => locale === value);
   } catch {
     return undefined;
@@ -57,12 +57,10 @@ export async function setPartyPasteLocale(
   instance: i18n,
   locale: SupportedLocale,
 ): Promise<void> {
-  if (typeof localStorage !== "undefined") {
-    try {
-      localStorage.setItem(localeStorageKey, locale);
-    } catch {
-      // A storage failure must not prevent the current window from switching.
-    }
+  try {
+    globalThis.localStorage?.setItem(localeStorageKey, locale);
+  } catch {
+    // A storage failure must not prevent the current window from switching.
   }
   await instance.changeLanguage(locale);
 }

@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, Fragment } from "react";
 import { useTranslation } from "react-i18next";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AppProviders,
   createPartyPasteI18n,
@@ -45,7 +45,27 @@ function LanguageProbe() {
 }
 
 describe("PartyPaste localization", () => {
-  afterEach(() => localStorage.clear());
+  let originalLocalStorageDescriptor: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "localStorage",
+    );
+  });
+
+  afterEach(() => {
+    if (originalLocalStorageDescriptor) {
+      Object.defineProperty(
+        globalThis,
+        "localStorage",
+        originalLocalStorageDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(globalThis, "localStorage");
+    }
+    globalThis.localStorage?.clear();
+  });
   it("keeps the Traditional Chinese and English catalogs in exact key parity", () => {
     expect(flattenKeys(zhTW).sort()).toEqual(flattenKeys(en).sort());
   });
@@ -85,6 +105,15 @@ describe("PartyPaste localization", () => {
       );
     }
     expect(source).not.toContain("This removes ${");
+
+    const managerEntry = readFileSync(
+      resolve(import.meta.dirname, "../app/manager-main.tsx"),
+      "utf8",
+    );
+    expect(managerEntry).toContain(
+      'throw new Error("PARTYPASTE_MANAGER_ROOT_MISSING")',
+    );
+    expect(managerEntry).not.toContain("Manager root element is missing.");
   });
 
   it("falls back to Traditional Chinese for an unsupported locale", async () => {
@@ -122,6 +151,31 @@ describe("PartyPaste localization", () => {
   it("ignores an invalid persisted locale and falls back to Traditional Chinese", () => {
     localStorage.setItem(localeStorageKey, "ja");
     expect(createPartyPasteI18n().language).toBe("zh-TW");
+  });
+
+  it("defaults to Traditional Chinese when acquiring localStorage throws", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("Storage blocked", "SecurityError");
+      },
+    });
+
+    expect(() => createPartyPasteI18n()).not.toThrow();
+    expect(createPartyPasteI18n().language).toBe("zh-TW");
+  });
+
+  it("still switches runtime language when acquiring localStorage throws", async () => {
+    const instance = createPartyPasteI18n("zh-TW");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("Storage blocked", "SecurityError");
+      },
+    });
+
+    await expect(setPartyPasteLocale(instance, "en")).resolves.toBeUndefined();
+    expect(instance.language).toBe("en");
   });
 
   it("switches language without replacing phrase content", async () => {
