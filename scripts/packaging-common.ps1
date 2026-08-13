@@ -122,16 +122,48 @@ function Get-PeMachine {
     }
 }
 
+function Get-PeSubsystem {
+    param([Parameter(Mandatory)] [string]$Path)
+    $stream = [System.IO.File]::OpenRead($Path)
+    $reader = [System.IO.BinaryReader]::new($stream)
+    try {
+        if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) { throw "Not a PE file: $Path" }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        $optionalHeaderOffset = $peOffset + 24
+        $subsystemOffset = $optionalHeaderOffset + 68
+        if ($peOffset -lt 0 -or $subsystemOffset + 2 -gt $stream.Length) { throw "Malformed PE header: $Path" }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) { throw "Missing PE signature: $Path" }
+        $stream.Position = $optionalHeaderOffset
+        $magic = $reader.ReadUInt16()
+        if ($magic -ne 0x010B -and $magic -ne 0x020B) { throw "Unsupported PE optional header: $Path" }
+        $stream.Position = $subsystemOffset
+        $reader.ReadUInt16()
+    }
+    finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Test-PartyPastePeIdentity {
     param(
         [Parameter(Mandatory)] [string]$Path,
         [Parameter(Mandatory)] [UInt16]$ExpectedMachine,
+        [int]$ExpectedSubsystem = -1,
         [Parameter(Mandatory)] [string]$ExpectedVersion,
         [Parameter(Mandatory)] [string]$Label
     )
     $machine = Get-PeMachine -Path $Path
     if ($machine -ne $ExpectedMachine) {
         throw ('{0} PE machine is 0x{1:X4}; expected 0x{2:X4}.' -f $Label, $machine, $ExpectedMachine)
+    }
+    if ($ExpectedSubsystem -ge 0) {
+        $subsystem = Get-PeSubsystem -Path $Path
+        if ($subsystem -ne $ExpectedSubsystem) {
+            throw ('{0} PE subsystem is {1}; expected {2}.' -f $Label, $subsystem, $ExpectedSubsystem)
+        }
     }
 
     $info = (Get-Item -LiteralPath $Path).VersionInfo

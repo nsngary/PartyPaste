@@ -87,7 +87,7 @@ try {
         }
     }
 
-    Test-PartyPastePeIdentity -Path $applicationPath -ExpectedMachine 0x8664 -ExpectedVersion $contract.Version -Label 'Portable application fixture'
+    Test-PartyPastePeIdentity -Path $applicationPath -ExpectedMachine 0x8664 -ExpectedSubsystem 2 -ExpectedVersion $contract.Version -Label 'Portable application fixture'
     Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedVersion $contract.Version -Label 'NSIS installer fixture'
     if ((ConvertTo-PartyPasteWindowsVersion '0.1.0') -ne '0.1.0.0') { throw 'Three-part Windows version normalization failed.' }
 

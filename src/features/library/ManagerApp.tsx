@@ -274,11 +274,11 @@ export function ManagerApp({
     setNameError(null);
   }
   async function saveName() {
-    if (!nameDialog || !selectedGameId) return;
+    if (!nameDialog) return;
+    const dialog = nameDialog;
+    if (dialog.kind === "group" && !selectedGameId) return;
     const validation =
-      nameDialog.kind === "game"
-        ? validateGameName(name)
-        : validateGroupName(name);
+      dialog.kind === "game" ? validateGameName(name) : validateGroupName(name);
     if (!validation.ok) {
       setNameError(
         validation.reason === "too_long"
@@ -287,7 +287,6 @@ export function ManagerApp({
       );
       return;
     }
-    const dialog = nameDialog;
     setNameDialog(null);
     if (dialog.kind === "game") {
       await finishMutation(
@@ -300,6 +299,8 @@ export function ManagerApp({
             }),
       );
     } else {
+      const gameId = selectedGameId;
+      if (!gameId) return;
       await finishMutation(
         dialog.item
           ? libraryApi.updateGroup({
@@ -312,7 +313,7 @@ export function ManagerApp({
           : libraryApi.createGroup({
               input: {
                 id: newId("group"),
-                gameId: selectedGameId,
+                gameId,
                 name: validation.value,
               },
             }),

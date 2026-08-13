@@ -139,6 +139,34 @@ function renderManager(api = makeApi(), width = 1440, locale = "en") {
 }
 
 describe("manager workflows", () => {
+  it("creates the first game when the library is empty", async () => {
+    const user = userEvent.setup();
+    const emptySnapshot: LibrarySnapshot = {
+      ...baseSnapshot,
+      games: [],
+      groups: [],
+      phrases: [],
+    };
+    const api = makeApi({
+      getLibrary: vi.fn().mockResolvedValue(emptySnapshot),
+    });
+    renderManager(api);
+
+    const newGameButtons = await screen.findAllByRole("button", {
+      name: "New game",
+    });
+    await user.click(newGameButtons[0]);
+    await user.type(
+      screen.getByRole("textbox", { name: "Game name" }),
+      "MapleStory",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(api.createGame).toHaveBeenCalledWith({
+      input: expect.objectContaining({ name: "MapleStory" }),
+    });
+  });
+
   it("debounces native search and combines favorites, template, and shortcut filters", async () => {
     const api = makeApi();
     renderManager(api);

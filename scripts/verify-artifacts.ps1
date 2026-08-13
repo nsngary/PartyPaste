@@ -28,7 +28,7 @@ if (-not ($actualNames -join "`n").Equals(($expectedNames -join "`n"), [StringCo
 
 $installerPath = Join-Path $outputPath $contract.InstallerName
 # Tauri's NSIS launcher is an x86 PE (0x014C) that installs the x64 PartyPaste payload.
-Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedVersion $version -Label 'NSIS installer'
+Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedSubsystem 2 -ExpectedVersion $version -Label 'NSIS installer'
 if ((& $SignatureStatusProvider $installerPath) -cne 'NotSigned') {
     throw 'Installer is not an unsigned local build.'
 }
@@ -88,7 +88,7 @@ try {
     }
     $portableExe = $archive.GetEntry('PartyPaste.exe')
     [System.IO.Compression.ZipFileExtensions]::ExtractToFile($portableExe, $portableTempPath, $true)
-    Test-PartyPastePeIdentity -Path $portableTempPath -ExpectedMachine 0x8664 -ExpectedVersion $version -Label 'Portable application'
+    Test-PartyPastePeIdentity -Path $portableTempPath -ExpectedMachine 0x8664 -ExpectedSubsystem 2 -ExpectedVersion $version -Label 'Portable application'
     if ((& $SignatureStatusProvider $portableTempPath) -cne 'NotSigned') {
         throw 'Portable application is not an unsigned local build.'
     }
