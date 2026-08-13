@@ -45,6 +45,7 @@
     "show": "Show overlay",
     "templateIncomplete": "Complete every variable before copying.",
     "templateInvalid": "This template is invalid and cannot be copied.",
+    "topmostLoading": "Loading pin setting",
     "titleOnly": "Title only",
     "unpin": "Unpin overlay"
   },

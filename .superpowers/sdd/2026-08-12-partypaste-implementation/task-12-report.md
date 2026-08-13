@@ -67,3 +67,29 @@ Fresh full gates:
 - `git diff --check`: pass before commit.
 
 The first full frontend gate stopped at Biome's deterministic import-order rule in `overlay-main.tsx`. After isolating that exact cause, imports were reordered and the complete fresh gate above passed. A real packaged-Windows monitor/DPI transition and tray/global-shortcut smoke test remains outside this automated review round.
+
+## Formal review fix round 2: drag-safe recovery and synchronized topmost state
+
+- Runtime moved/resized recovery now preserves ordinary drags whenever at least a usable 64x32 area remains visible on a current monitor and the window still fits a current work area. Cross-monitor straddling is left untouched. Off-screen or topology-invalid bounds still recover; scale-factor and startup recovery retain full clamping.
+- Minimized, maximized, and fullscreen windows are excluded from recovery mutations.
+- Recovery reads outer bounds but converts an oversized target to the correct inner physical size by subtracting the measured decoration delta. Pure regression coverage proves a decorated Manager converges in one resize and repeated events become no-ops.
+- Native topmost reads and serialized mutations emit `window-settings-changed` with the camelCase `{ alwaysOnTop: boolean }` contract while holding the settings serialization boundary.
+- Manager Settings and the overlay subscribe/unsubscribe to confirmed native changes. Load/event sequencing and mutation/event sequencing prevent stale reads or responses from overwriting newer cross-window state.
+- The overlay pin uses an unknown/loading label with no false `aria-pressed` value until native state is confirmed.
+
+Strict RED/GREEN evidence:
+
+- RED Rust: missing recovery reason, presentation, and outer-to-inner conversion seams.
+- RED React: missing loading semantics and cross-window subscriptions produced three focused failures.
+- Targeted GREEN: 10 overlay/settings files / 41 tests; required Cargo `windows` filter 19/19.
+
+Fresh full gates:
+
+- Node 24.15 `npm run verify`: pass; 24 files / 142 tests.
+- Node 24.15 `npm run build`: pass; 1,927 modules transformed.
+- Cargo fmt check: pass.
+- Strict Clippy, all targets/features with warnings denied: pass.
+- Full Rust suite, all targets/features: pass; 85 tests.
+- Capability assertions and `git diff --check`: pass before commit.
+
+The first Rust GREEN rerun exposed one mechanical missing brace in the tightened visibility predicate; after correcting that exact parse failure, targeted and full gates passed fresh. Real packaged-Windows monitor removal, decorated resize, DPI transition, and cross-window WebView event smoke tests remain outside automated verification.

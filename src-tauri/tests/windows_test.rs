@@ -2,9 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use partypaste_lib::services::windows::{
-    Bounds, LifecycleEffect, LifecycleEvent, Monitor, OVERLAY_TOPMOST_KEY, WindowKind,
-    clamp_bounds, default_overlay_topmost, lifecycle_effects, minimum_physical_size,
-    recovery_adjustment, tray_action,
+    Bounds, LifecycleEffect, LifecycleEvent, Monitor, OVERLAY_TOPMOST_KEY, RecoveryReason,
+    WindowKind, WindowPresentation, WindowSettingsDto, clamp_bounds, default_overlay_topmost,
+    lifecycle_effects, minimum_physical_size, outer_target_to_inner_size, recovery_adjustment,
+    tray_action,
 };
 
 #[test]
@@ -186,6 +187,8 @@ fn windows_runtime_recovery_reclamps_after_dpi_and_monitor_changes_then_becomes_
         },
         &remaining_monitor,
         minimum,
+        RecoveryReason::ScaleFactorChanged,
+        WindowPresentation::Normal,
     );
     assert_eq!(
         recovered,
@@ -197,7 +200,13 @@ fn windows_runtime_recovery_reclamps_after_dpi_and_monitor_changes_then_becomes_
         })
     );
     assert_eq!(
-        recovery_adjustment(recovered.unwrap(), &remaining_monitor, minimum),
+        recovery_adjustment(
+            recovered.unwrap(),
+            &remaining_monitor,
+            minimum,
+            RecoveryReason::MovedOrResized,
+            WindowPresentation::Normal,
+        ),
         None
     );
 }
@@ -222,9 +231,125 @@ fn windows_runtime_recovery_does_nothing_for_already_visible_bounds() {
             },
             &monitor,
             minimum_physical_size(WindowKind::Manager, 1.0),
+            RecoveryReason::MovedOrResized,
+            WindowPresentation::Normal,
         ),
         None
     );
+}
+
+#[test]
+fn windows_normal_cross_monitor_drag_and_straddle_remain_unchanged() {
+    let monitors = [
+        Monitor {
+            work_area: Bounds {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1040,
+            },
+        },
+        Monitor {
+            work_area: Bounds {
+                x: 1920,
+                y: 0,
+                width: 1920,
+                height: 1040,
+            },
+        },
+    ];
+    for bounds in [
+        Bounds {
+            x: 200,
+            y: 100,
+            width: 1120,
+            height: 720,
+        },
+        Bounds {
+            x: 1500,
+            y: 100,
+            width: 1120,
+            height: 720,
+        },
+    ] {
+        assert_eq!(
+            recovery_adjustment(
+                bounds,
+                &monitors,
+                (760, 560),
+                RecoveryReason::MovedOrResized,
+                WindowPresentation::Normal
+            ),
+            None
+        );
+    }
+}
+
+#[test]
+fn windows_minimized_maximized_and_fullscreen_events_never_mutate_bounds() {
+    let monitor = [Monitor {
+        work_area: Bounds {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+    }];
+    let offscreen = Bounds {
+        x: 2200,
+        y: 80,
+        width: 1120,
+        height: 720,
+    };
+    for presentation in [
+        WindowPresentation::Minimized,
+        WindowPresentation::Maximized,
+        WindowPresentation::Fullscreen,
+    ] {
+        assert_eq!(
+            recovery_adjustment(
+                offscreen,
+                &monitor,
+                (760, 560),
+                RecoveryReason::ScaleFactorChanged,
+                presentation
+            ),
+            None
+        );
+    }
+}
+
+#[test]
+fn windows_decorated_outer_resize_converts_to_inner_size_and_converges_once() {
+    assert_eq!(
+        outer_target_to_inner_size((1280, 680), (1600, 900), (1584, 861)),
+        (1264, 641)
+    );
+    assert_eq!(
+        outer_target_to_inner_size((1280, 680), (1280, 680), (1264, 641)),
+        (1264, 641)
+    );
+}
+
+#[test]
+fn windows_settings_event_payload_is_camel_case_and_contains_only_topmost() {
+    assert_eq!(
+        serde_json::to_value(WindowSettingsDto {
+            always_on_top: true
+        })
+        .unwrap(),
+        serde_json::json!({"alwaysOnTop": true})
+    );
+}
+
+#[test]
+fn windows_settings_event_contract_is_shared_without_broadening_overlay_capabilities() {
+    let source = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/services/windows.rs"),
+    )
+    .unwrap();
+    assert!(source.contains("window-settings-changed"));
+    assert!(source.contains("state.set_topmost(&app, always_on_top)?"));
 }
 
 #[test]

@@ -10,6 +10,97 @@ afterEach(() => {
 });
 
 describe("SettingsPage", () => {
+  it("accepts a confirmed overlay event and sends the synchronized next intent", async () => {
+    const user = userEvent.setup();
+    let settingsHandler:
+      | ((settings: { alwaysOnTop: boolean }) => void)
+      | undefined;
+    const settingsApi = {
+      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: false }),
+      toggleTopmost: vi.fn().mockResolvedValue(false),
+      subscribeToWindowSettings: vi.fn(async (handler) => {
+        settingsHandler = handler;
+        return () => undefined;
+      }),
+    };
+    render(
+      <AppProviders i18n={createPartyPasteI18n("en")}>
+        <SettingsPage
+          backupApi={{
+            exportBackup: vi.fn(),
+            previewImport: vi.fn(),
+            replaceFromBackup: vi.fn(),
+          }}
+          fileDialog={{ openBackup: vi.fn(), saveBackup: vi.fn() }}
+          settingsApi={settingsApi}
+          shortcutApi={{
+            getShortcuts: vi
+              .fn()
+              .mockResolvedValue({ overlay: "Ctrl+Shift+Space", phrases: {} }),
+            setOverlayShortcut: vi.fn(),
+          }}
+        />
+      </AppProviders>,
+    );
+    const topmost = await screen.findByRole("checkbox", {
+      name: "Always on top",
+    });
+    settingsHandler?.({ alwaysOnTop: true });
+    await waitFor(() =>
+      expect((topmost as HTMLInputElement).checked).toBe(true),
+    );
+    await user.click(topmost);
+    expect(settingsApi.toggleTopmost).toHaveBeenCalledWith(false);
+  });
+
+  it("does not let an older Manager response overwrite a newer overlay event", async () => {
+    const user = userEvent.setup();
+    let resolveToggle: (value: boolean) => void = () => undefined;
+    const toggle = new Promise<boolean>((resolve) => {
+      resolveToggle = resolve;
+    });
+    let settingsHandler:
+      | ((settings: { alwaysOnTop: boolean }) => void)
+      | undefined;
+    const settingsApi = {
+      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: false }),
+      toggleTopmost: vi.fn().mockReturnValue(toggle),
+      subscribeToWindowSettings: vi.fn(async (handler) => {
+        settingsHandler = handler;
+        return () => undefined;
+      }),
+    };
+    render(
+      <AppProviders i18n={createPartyPasteI18n("en")}>
+        <SettingsPage
+          backupApi={{
+            exportBackup: vi.fn(),
+            previewImport: vi.fn(),
+            replaceFromBackup: vi.fn(),
+          }}
+          fileDialog={{ openBackup: vi.fn(), saveBackup: vi.fn() }}
+          settingsApi={settingsApi}
+          shortcutApi={{
+            getShortcuts: vi
+              .fn()
+              .mockResolvedValue({ overlay: "Ctrl+Shift+Space", phrases: {} }),
+            setOverlayShortcut: vi.fn(),
+          }}
+        />
+      </AppProviders>,
+    );
+    const topmost = await screen.findByRole("checkbox", {
+      name: "Always on top",
+    });
+    await user.click(topmost);
+    settingsHandler?.({ alwaysOnTop: false });
+    resolveToggle(true);
+    await waitFor(() =>
+      expect((topmost as HTMLInputElement).disabled).toBe(false),
+    );
+    expect((topmost as HTMLInputElement).checked).toBe(false);
+  });
+
   it("prevents a stale rapid topmost toggle while persistence is pending", async () => {
     const user = userEvent.setup();
     let resolveToggle: (value: boolean) => void = () => undefined;

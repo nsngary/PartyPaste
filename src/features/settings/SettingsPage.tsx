@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   createWindowSettingsApi,
@@ -35,14 +35,30 @@ export function SettingsPage({
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [topmostPending, setTopmostPending] = useState(true);
   const [preferenceError, setPreferenceError] = useState(false);
+  const confirmedSequence = useRef(0);
 
   useEffect(() => {
     let active = true;
+    let unlisten: (() => void) | undefined;
+    const loadSequence = confirmedSequence.current;
     setTopmostPending(true);
+    void settingsApi
+      .subscribeToWindowSettings?.((settings) => {
+        if (!active) return;
+        confirmedSequence.current += 1;
+        setAlwaysOnTop(settings.alwaysOnTop);
+        setPreferenceError(false);
+      })
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      });
     void settingsApi
       .getWindowSettings()
       .then((settings) => {
-        if (active) setAlwaysOnTop(settings.alwaysOnTop);
+        if (active && loadSequence === confirmedSequence.current) {
+          setAlwaysOnTop(settings.alwaysOnTop);
+        }
       })
       .catch(() => {
         if (active) setPreferenceError(true);
@@ -52,19 +68,26 @@ export function SettingsPage({
       });
     return () => {
       active = false;
+      unlisten?.();
     };
   }, [settingsApi]);
 
   async function changeTopmost(enabled: boolean) {
     const previous = alwaysOnTop;
+    const mutationSequence = confirmedSequence.current;
     setAlwaysOnTop(enabled);
     setPreferenceError(false);
     setTopmostPending(true);
     try {
-      setAlwaysOnTop(await settingsApi.toggleTopmost(enabled));
+      const confirmed = await settingsApi.toggleTopmost(enabled);
+      if (mutationSequence === confirmedSequence.current) {
+        setAlwaysOnTop(confirmed);
+      }
     } catch {
-      setAlwaysOnTop(previous);
-      setPreferenceError(true);
+      if (mutationSequence === confirmedSequence.current) {
+        setAlwaysOnTop(previous);
+        setPreferenceError(true);
+      }
     } finally {
       setTopmostPending(false);
     }

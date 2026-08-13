@@ -1,5 +1,5 @@
 import { Pin, PinOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { WindowSettingsApi } from "../../api/window-settings";
 import { IconButton } from "../../components/IconButton";
@@ -21,17 +21,33 @@ export function OverlayHeader({
   topmostApi,
 }: OverlayHeaderProps) {
   const { t } = useTranslation();
-  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTop] = useState<boolean | null>(null);
   const [pending, setPending] = useState(true);
   const [error, setError] = useState(false);
+  const confirmedSequence = useRef(0);
 
   useEffect(() => {
     let active = true;
+    let unlisten: (() => void) | undefined;
+    const loadSequence = confirmedSequence.current;
     setPending(true);
+    void topmostApi
+      .subscribeToWindowSettings?.((settings) => {
+        if (!active) return;
+        confirmedSequence.current += 1;
+        setAlwaysOnTop(settings.alwaysOnTop);
+        setError(false);
+      })
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      });
     void topmostApi
       .getWindowSettings()
       .then((settings) => {
-        if (active) setAlwaysOnTop(settings.alwaysOnTop);
+        if (active && loadSequence === confirmedSequence.current) {
+          setAlwaysOnTop(settings.alwaysOnTop);
+        }
       })
       .catch(() => {
         if (active) setError(true);
@@ -41,18 +57,26 @@ export function OverlayHeader({
       });
     return () => {
       active = false;
+      unlisten?.();
     };
   }, [topmostApi]);
 
   async function changeTopmost() {
+    if (alwaysOnTop === null) return;
     const previous = alwaysOnTop;
+    const mutationSequence = confirmedSequence.current;
     setPending(true);
     setError(false);
     try {
-      setAlwaysOnTop(await topmostApi.toggleTopmost(!previous));
+      const confirmed = await topmostApi.toggleTopmost(!previous);
+      if (mutationSequence === confirmedSequence.current) {
+        setAlwaysOnTop(confirmed);
+      }
     } catch {
-      setAlwaysOnTop(previous);
-      setError(true);
+      if (mutationSequence === confirmedSequence.current) {
+        setAlwaysOnTop(previous);
+        setError(true);
+      }
     } finally {
       setPending(false);
     }
@@ -78,10 +102,16 @@ export function OverlayHeader({
         </select>
       </label>
       <IconButton
-        aria-pressed={alwaysOnTop}
+        aria-pressed={alwaysOnTop ?? undefined}
         disabled={pending}
         icon={alwaysOnTop ? <PinOff size={16} /> : <Pin size={16} />}
-        label={t(alwaysOnTop ? "overlay.unpin" : "overlay.pin")}
+        label={t(
+          alwaysOnTop === null
+            ? "overlay.topmostLoading"
+            : alwaysOnTop
+              ? "overlay.unpin"
+              : "overlay.pin",
+        )}
         onClick={() => void changeTopmost()}
         variant="outlined"
       />

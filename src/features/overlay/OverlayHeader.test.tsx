@@ -30,6 +30,62 @@ function renderHeader(api: OverlayTopmostApi) {
 }
 
 describe("OverlayHeader topmost control", () => {
+  it("uses an unknown loading semantic until native state arrives", () => {
+    renderHeader({
+      getWindowSettings: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      toggleTopmost: vi.fn(),
+    });
+    const button = screen.getByRole("button", { name: "Loading pin setting" });
+    expect(button.getAttribute("aria-pressed")).toBeNull();
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("accepts a confirmed Manager change and toggles from that synchronized value", async () => {
+    const user = userEvent.setup();
+    let settingsHandler:
+      | ((settings: { alwaysOnTop: boolean }) => void)
+      | undefined;
+    const api = {
+      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: false }),
+      toggleTopmost: vi.fn().mockResolvedValue(false),
+      subscribeToWindowSettings: vi.fn(async (handler) => {
+        settingsHandler = handler;
+        return () => undefined;
+      }),
+    };
+    renderHeader(api);
+    await screen.findByRole("button", { name: "Pin overlay" });
+    settingsHandler?.({ alwaysOnTop: true });
+    await user.click(
+      await screen.findByRole("button", { name: "Unpin overlay" }),
+    );
+    expect(api.toggleTopmost).toHaveBeenCalledWith(false);
+  });
+
+  it("does not let an older click response overwrite a newer Manager event", async () => {
+    const user = userEvent.setup();
+    const change = deferred<boolean>();
+    let settingsHandler:
+      | ((settings: { alwaysOnTop: boolean }) => void)
+      | undefined;
+    renderHeader({
+      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: false }),
+      toggleTopmost: vi.fn().mockReturnValue(change.promise),
+      subscribeToWindowSettings: vi.fn(async (handler) => {
+        settingsHandler = handler;
+        return () => undefined;
+      }),
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Pin overlay" }),
+    );
+    settingsHandler?.({ alwaysOnTop: false });
+    change.resolve(true);
+    expect(
+      await screen.findByRole("button", { name: "Pin overlay" }),
+    ).toBeTruthy();
+  });
+
   it("loads pinned state and applies one keyboard toggle while the request is pending", async () => {
     const user = userEvent.setup();
     const change = deferred<boolean>();

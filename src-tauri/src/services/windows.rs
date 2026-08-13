@@ -134,6 +134,21 @@ pub struct Monitor {
     pub work_area: Bounds,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryReason {
+    Startup,
+    ScaleFactorChanged,
+    MovedOrResized,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowPresentation {
+    Normal,
+    Minimized,
+    Maximized,
+    Fullscreen,
+}
+
 pub fn clamp_bounds(saved: Bounds, monitors: &[Monitor], minimum: (u32, u32)) -> Bounds {
     let Some(monitor) = nearest_monitor(saved, monitors) else {
         return saved;
@@ -163,9 +178,52 @@ pub fn recovery_adjustment(
     current: Bounds,
     monitors: &[Monitor],
     minimum: (u32, u32),
+    reason: RecoveryReason,
+    presentation: WindowPresentation,
 ) -> Option<Bounds> {
+    if presentation != WindowPresentation::Normal {
+        return None;
+    }
+    if reason == RecoveryReason::MovedOrResized
+        && meaningfully_visible(current, monitors)
+        && monitors.iter().any(|monitor| {
+            current.width <= monitor.work_area.width && current.height <= monitor.work_area.height
+        })
+    {
+        return None;
+    }
     let recovered = clamp_bounds(current, monitors, minimum);
     (recovered != current).then_some(recovered)
+}
+
+fn meaningfully_visible(bounds: Bounds, monitors: &[Monitor]) -> bool {
+    monitors.iter().any(|monitor| {
+        let work = monitor.work_area;
+        let width = ((i64::from(bounds.x) + i64::from(bounds.width))
+            .min(i64::from(work.x) + i64::from(work.width))
+            - i64::from(bounds.x).max(i64::from(work.x)))
+        .max(0) as u32;
+        let height = ((i64::from(bounds.y) + i64::from(bounds.height))
+            .min(i64::from(work.y) + i64::from(work.height))
+            - i64::from(bounds.y).max(i64::from(work.y)))
+        .max(0) as u32;
+        width >= bounds.width.min(64) && height >= bounds.height.min(32)
+    })
+}
+
+pub fn outer_target_to_inner_size(
+    target_outer: (u32, u32),
+    current_outer: (u32, u32),
+    current_inner: (u32, u32),
+) -> (u32, u32) {
+    (
+        target_outer
+            .0
+            .saturating_sub(current_outer.0.saturating_sub(current_inner.0)),
+        target_outer
+            .1
+            .saturating_sub(current_outer.1.saturating_sub(current_inner.1)),
+    )
 }
 
 fn nearest_monitor(saved: Bounds, monitors: &[Monitor]) -> Option<&Monitor> {
@@ -212,20 +270,33 @@ impl WindowServiceState {
 
     pub fn settings(&self) -> Result<WindowSettingsDto, AppError> {
         let repository = self.lock()?;
-        let always_on_top = repository
-            .snapshot()
-            .map_err(|_| AppError::Database {
-                message_key: "errors.database",
-            })?
-            .settings
-            .iter()
-            .find(|setting| setting.key == OVERLAY_TOPMOST_KEY)
-            .map_or_else(default_overlay_topmost, |setting| setting.value == "true");
-        Ok(WindowSettingsDto { always_on_top })
+        settings_from_repository(&repository)
     }
 
-    fn persist_topmost(&self, enabled: bool) -> Result<(), AppError> {
-        self.lock()?
+    fn settings_and_emit<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+    ) -> Result<WindowSettingsDto, AppError> {
+        let repository = self.lock()?;
+        let settings = settings_from_repository(&repository)?;
+        let _ = app.emit("window-settings-changed", settings);
+        Ok(settings)
+    }
+
+    fn set_topmost<R: Runtime>(&self, app: &AppHandle<R>, enabled: bool) -> Result<(), AppError> {
+        let mut repository = self.lock()?;
+        let overlay =
+            app.get_webview_window(WindowKind::Overlay.label())
+                .ok_or(AppError::Internal {
+                    message_key: "errors.internal",
+                })?;
+        let previous = overlay.is_always_on_top().unwrap_or(!enabled);
+        overlay
+            .set_always_on_top(enabled)
+            .map_err(|_| AppError::Internal {
+                message_key: "errors.internal",
+            })?;
+        if let Err(error) = repository
             .transaction(|tx| {
                 tx.upsert_setting(&SettingRecord {
                     key: OVERLAY_TOPMOST_KEY.into(),
@@ -235,7 +306,31 @@ impl WindowServiceState {
             .map_err(|_| AppError::Database {
                 message_key: "errors.database",
             })
+        {
+            let _ = overlay.set_always_on_top(previous);
+            return Err(error);
+        }
+        let _ = app.emit(
+            "window-settings-changed",
+            WindowSettingsDto {
+                always_on_top: enabled,
+            },
+        );
+        Ok(())
     }
+}
+
+fn settings_from_repository(repository: &Repository) -> Result<WindowSettingsDto, AppError> {
+    let always_on_top = repository
+        .snapshot()
+        .map_err(|_| AppError::Database {
+            message_key: "errors.database",
+        })?
+        .settings
+        .iter()
+        .find(|setting| setting.key == OVERLAY_TOPMOST_KEY)
+        .map_or_else(default_overlay_topmost, |setting| setting.value == "true");
+    Ok(WindowSettingsDto { always_on_top })
 }
 
 pub struct TrayState<R: Runtime> {
@@ -300,7 +395,17 @@ pub fn install_window_lifecycle<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
                 WindowEvent::Moved(_)
                 | WindowEvent::Resized(_)
                 | WindowEvent::ScaleFactorChanged { .. } => {
-                    let _ = recover_webview_window_bounds(&event_window, kind, recovering.as_ref());
+                    let reason = if matches!(event, WindowEvent::ScaleFactorChanged { .. }) {
+                        RecoveryReason::ScaleFactorChanged
+                    } else {
+                        RecoveryReason::MovedOrResized
+                    };
+                    let _ = recover_webview_window_bounds(
+                        &event_window,
+                        kind,
+                        reason,
+                        recovering.as_ref(),
+                    );
                 }
                 _ => {}
             });
@@ -314,7 +419,12 @@ pub fn recover_window_bounds<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()
         let Some(window) = app.get_webview_window(kind.label()) else {
             continue;
         };
-        recover_webview_window_bounds(&window, kind, &AtomicBool::new(false))?;
+        recover_webview_window_bounds(
+            &window,
+            kind,
+            RecoveryReason::Startup,
+            &AtomicBool::new(false),
+        )?;
     }
     Ok(())
 }
@@ -330,6 +440,7 @@ impl Drop for RecoveryGuard<'_> {
 fn recover_webview_window_bounds<R: Runtime>(
     window: &WebviewWindow<R>,
     kind: WindowKind,
+    reason: RecoveryReason,
     recovering: &AtomicBool,
 ) -> tauri::Result<bool> {
     if recovering
@@ -356,6 +467,15 @@ fn recover_webview_window_bounds<R: Runtime>(
         .collect::<Vec<_>>();
     let position = window.outer_position()?;
     let size = window.outer_size()?;
+    let presentation = if window.is_minimized()? {
+        WindowPresentation::Minimized
+    } else if window.is_maximized()? {
+        WindowPresentation::Maximized
+    } else if window.is_fullscreen()? {
+        WindowPresentation::Fullscreen
+    } else {
+        WindowPresentation::Normal
+    };
     let current = Bounds {
         x: position.x,
         y: position.y,
@@ -366,11 +486,19 @@ fn recover_webview_window_bounds<R: Runtime>(
         current,
         &monitors,
         minimum_physical_size(kind, window.scale_factor()?),
+        reason,
+        presentation,
     ) else {
         return Ok(false);
     };
     if (recovered.width, recovered.height) != (current.width, current.height) {
-        window.set_size(PhysicalSize::new(recovered.width, recovered.height))?;
+        let inner = window.inner_size()?;
+        let target_inner = outer_target_to_inner_size(
+            (recovered.width, recovered.height),
+            (current.width, current.height),
+            (inner.width, inner.height),
+        );
+        window.set_size(PhysicalSize::new(target_inner.0, target_inner.1))?;
     }
     if (recovered.x, recovered.y) != (current.x, current.y) {
         window.set_position(PhysicalPosition::new(recovered.x, recovered.y))?;
@@ -455,9 +583,10 @@ pub fn open_manager(app: AppHandle) {
 
 #[tauri::command]
 pub fn get_window_settings(
+    app: AppHandle,
     state: State<'_, WindowServiceState>,
 ) -> Result<WindowSettingsDto, AppError> {
-    state.settings()
+    state.settings_and_emit(&app)
 }
 
 #[tauri::command]
@@ -466,21 +595,7 @@ pub fn toggle_topmost(
     state: State<'_, WindowServiceState>,
     always_on_top: bool,
 ) -> Result<bool, AppError> {
-    let overlay =
-        app.get_webview_window(WindowKind::Overlay.label())
-            .ok_or(AppError::Internal {
-                message_key: "errors.internal",
-            })?;
-    let previous = overlay.is_always_on_top().unwrap_or(!always_on_top);
-    overlay
-        .set_always_on_top(always_on_top)
-        .map_err(|_| AppError::Internal {
-            message_key: "errors.internal",
-        })?;
-    if let Err(error) = state.persist_topmost(always_on_top) {
-        let _ = overlay.set_always_on_top(previous);
-        return Err(error);
-    }
+    state.set_topmost(&app, always_on_top)?;
     Ok(always_on_top)
 }
 

@@ -45,6 +45,7 @@
     "show": "顯示浮動視窗",
     "templateIncomplete": "請填完所有變數後再複製。",
     "templateInvalid": "這個範本格式無效，無法複製。",
+    "topmostLoading": "正在載入釘選設定",
     "titleOnly": "僅顯示標題",
     "unpin": "取消釘選浮動視窗"
   },

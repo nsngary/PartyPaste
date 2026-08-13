@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { invokeCommand, type NativeInvoke } from "./commands";
 
 export interface WindowSettingsDto {
@@ -7,6 +8,9 @@ export interface WindowSettingsDto {
 export interface WindowSettingsApi {
   getWindowSettings(): Promise<WindowSettingsDto>;
   toggleTopmost(enabled: boolean): Promise<boolean>;
+  subscribeToWindowSettings?: (
+    handler: (settings: WindowSettingsDto) => void,
+  ) => Promise<() => void>;
 }
 
 export function createWindowSettingsApi(
@@ -17,5 +21,12 @@ export function createWindowSettingsApi(
       invoke<WindowSettingsDto>("get_window_settings", {}),
     toggleTopmost: (alwaysOnTop) =>
       invoke<boolean>("toggle_topmost", { alwaysOnTop }),
+    subscribeToWindowSettings: async (handler) => {
+      const unlisten = await listen<WindowSettingsDto>(
+        "window-settings-changed",
+        (event) => handler(event.payload),
+      );
+      return unlisten;
+    },
   };
 }
