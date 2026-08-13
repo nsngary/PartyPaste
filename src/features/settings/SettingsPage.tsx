@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useWindowSettings } from "../../api/useWindowSettings";
 import {
   createWindowSettingsApi,
   type WindowSettingsApi,
@@ -32,66 +32,13 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const { i18n, t } = useTranslation();
   const locale: SupportedLocale = i18n.language === "en" ? "en" : "zh-TW";
-  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
-  const [topmostPending, setTopmostPending] = useState(true);
-  const [preferenceError, setPreferenceError] = useState(false);
-  const confirmedSequence = useRef(0);
-
-  useEffect(() => {
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    const loadSequence = confirmedSequence.current;
-    setTopmostPending(true);
-    void settingsApi
-      .subscribeToWindowSettings?.((settings) => {
-        if (!active) return;
-        confirmedSequence.current += 1;
-        setAlwaysOnTop(settings.alwaysOnTop);
-        setPreferenceError(false);
-      })
-      .then((stop) => {
-        if (active) unlisten = stop;
-        else stop();
-      });
-    void settingsApi
-      .getWindowSettings()
-      .then((settings) => {
-        if (active && loadSequence === confirmedSequence.current) {
-          setAlwaysOnTop(settings.alwaysOnTop);
-        }
-      })
-      .catch(() => {
-        if (active) setPreferenceError(true);
-      })
-      .finally(() => {
-        if (active) setTopmostPending(false);
-      });
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [settingsApi]);
-
-  async function changeTopmost(enabled: boolean) {
-    const previous = alwaysOnTop;
-    const mutationSequence = confirmedSequence.current;
-    setAlwaysOnTop(enabled);
-    setPreferenceError(false);
-    setTopmostPending(true);
-    try {
-      const confirmed = await settingsApi.toggleTopmost(enabled);
-      if (mutationSequence === confirmedSequence.current) {
-        setAlwaysOnTop(confirmed);
-      }
-    } catch {
-      if (mutationSequence === confirmedSequence.current) {
-        setAlwaysOnTop(previous);
-        setPreferenceError(true);
-      }
-    } finally {
-      setTopmostPending(false);
-    }
-  }
+  const {
+    alwaysOnTop,
+    error: preferenceError,
+    pending: topmostPending,
+    retry: retryTopmost,
+    toggle: toggleTopmost,
+  } = useWindowSettings(settingsApi);
 
   return (
     <div className="pp-settings">
@@ -124,9 +71,9 @@ export function SettingsPage({
         <label className="pp-settings__checkbox">
           <input
             aria-label={t("overlay.alwaysOnTop")}
-            checked={alwaysOnTop}
-            disabled={topmostPending}
-            onChange={(event) => void changeTopmost(event.target.checked)}
+            checked={alwaysOnTop ?? false}
+            disabled={topmostPending || alwaysOnTop === null}
+            onChange={() => void toggleTopmost()}
             type="checkbox"
           />
           <span>
@@ -135,7 +82,12 @@ export function SettingsPage({
           </span>
         </label>
         {preferenceError ? (
-          <p role="alert">{t("overlay.preferenceSaveFailed")}</p>
+          <p role="alert">
+            {t("overlay.preferenceSaveFailed")}{" "}
+            <button onClick={retryTopmost} type="button">
+              {t("common.retry")}
+            </button>
+          </p>
         ) : null}
       </section>
       <ShortcutSettings api={shortcutApi} />

@@ -149,6 +149,12 @@ pub enum WindowPresentation {
     Fullscreen,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryPlan {
+    pub position: Option<(i32, i32)>,
+    pub inner_size: Option<(u32, u32)>,
+}
+
 pub fn clamp_bounds(saved: Bounds, monitors: &[Monitor], minimum: (u32, u32)) -> Bounds {
     let Some(monitor) = nearest_monitor(saved, monitors) else {
         return saved;
@@ -224,6 +230,46 @@ pub fn outer_target_to_inner_size(
             .1
             .saturating_sub(current_outer.1.saturating_sub(current_inner.1)),
     )
+}
+
+pub fn recovery_plan(
+    current: Bounds,
+    current_inner: (u32, u32),
+    monitors: &[Monitor],
+    minimum_inner: (u32, u32),
+    reason: RecoveryReason,
+    presentation: WindowPresentation,
+) -> Option<RecoveryPlan> {
+    if presentation != WindowPresentation::Normal {
+        return None;
+    }
+    let decoration = (
+        current.width.saturating_sub(current_inner.0),
+        current.height.saturating_sub(current_inner.1),
+    );
+    let minimum_outer = (
+        minimum_inner.0.saturating_add(decoration.0),
+        minimum_inner.1.saturating_add(decoration.1),
+    );
+    let target = recovery_adjustment(current, monitors, minimum_outer, reason, presentation)?;
+    let monitor = nearest_monitor(current, monitors)?;
+    let minimum_fits =
+        minimum_outer.0 <= monitor.work_area.width && minimum_outer.1 <= monitor.work_area.height;
+    let position = ((target.x, target.y) != (current.x, current.y)).then_some((target.x, target.y));
+    let inner_size =
+        if minimum_fits && (target.width, target.height) != (current.width, current.height) {
+            Some(outer_target_to_inner_size(
+                (target.width, target.height),
+                (current.width, current.height),
+                current_inner,
+            ))
+        } else {
+            None
+        };
+    (position.is_some() || inner_size.is_some()).then_some(RecoveryPlan {
+        position,
+        inner_size,
+    })
 }
 
 fn nearest_monitor(saved: Bounds, monitors: &[Monitor]) -> Option<&Monitor> {
@@ -482,8 +528,10 @@ fn recover_webview_window_bounds<R: Runtime>(
         width: size.width,
         height: size.height,
     };
-    let Some(recovered) = recovery_adjustment(
+    let inner = window.inner_size()?;
+    let Some(plan) = recovery_plan(
         current,
+        (inner.width, inner.height),
         &monitors,
         minimum_physical_size(kind, window.scale_factor()?),
         reason,
@@ -491,17 +539,11 @@ fn recover_webview_window_bounds<R: Runtime>(
     ) else {
         return Ok(false);
     };
-    if (recovered.width, recovered.height) != (current.width, current.height) {
-        let inner = window.inner_size()?;
-        let target_inner = outer_target_to_inner_size(
-            (recovered.width, recovered.height),
-            (current.width, current.height),
-            (inner.width, inner.height),
-        );
-        window.set_size(PhysicalSize::new(target_inner.0, target_inner.1))?;
+    if let Some((width, height)) = plan.inner_size {
+        window.set_size(PhysicalSize::new(width, height))?;
     }
-    if (recovered.x, recovered.y) != (current.x, current.y) {
-        window.set_position(PhysicalPosition::new(recovered.x, recovered.y))?;
+    if let Some((x, y)) = plan.position {
+        window.set_position(PhysicalPosition::new(x, y))?;
     }
     let _ = window
         .app_handle()

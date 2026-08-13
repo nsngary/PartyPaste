@@ -5,7 +5,7 @@ use partypaste_lib::services::windows::{
     Bounds, LifecycleEffect, LifecycleEvent, Monitor, OVERLAY_TOPMOST_KEY, RecoveryReason,
     WindowKind, WindowPresentation, WindowSettingsDto, clamp_bounds, default_overlay_topmost,
     lifecycle_effects, minimum_physical_size, outer_target_to_inner_size, recovery_adjustment,
-    tray_action,
+    recovery_plan, tray_action,
 };
 
 #[test]
@@ -329,6 +329,82 @@ fn windows_decorated_outer_resize_converts_to_inner_size_and_converges_once() {
         outer_target_to_inner_size((1280, 680), (1280, 680), (1264, 641)),
         (1264, 641)
     );
+}
+
+#[test]
+fn windows_impossible_scaled_manager_minimum_repositions_without_repeated_resize() {
+    for (scale, work_height) in [(1.5, 720), (2.0, 1080)] {
+        let monitor = [Monitor {
+            work_area: Bounds {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: work_height,
+            },
+        }];
+        let current = Bounds {
+            x: 2300,
+            y: 100,
+            width: (760.0 * scale) as u32 + 16,
+            height: (560.0 * scale) as u32 + 39,
+        };
+        let inner = (current.width - 16, current.height - 39);
+        let plan = recovery_plan(
+            current,
+            inner,
+            &monitor,
+            minimum_physical_size(WindowKind::Manager, scale),
+            RecoveryReason::ScaleFactorChanged,
+            WindowPresentation::Normal,
+        )
+        .unwrap();
+        assert_eq!(plan.inner_size, None);
+        assert!(plan.position.is_some());
+        let stable = Bounds {
+            x: plan.position.unwrap().0,
+            y: plan.position.unwrap().1,
+            ..current
+        };
+        assert_eq!(
+            recovery_plan(
+                stable,
+                inner,
+                &monitor,
+                minimum_physical_size(WindowKind::Manager, scale),
+                RecoveryReason::MovedOrResized,
+                WindowPresentation::Normal
+            ),
+            None
+        );
+    }
+}
+
+#[test]
+fn windows_overlay_recovery_returns_a_convergent_inner_resize_plan() {
+    let monitor = [Monitor {
+        work_area: Bounds {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+    }];
+    let plan = recovery_plan(
+        Bounds {
+            x: 0,
+            y: 0,
+            width: 1600,
+            height: 900,
+        },
+        (1584, 861),
+        &monitor,
+        (240, 160),
+        RecoveryReason::ScaleFactorChanged,
+        WindowPresentation::Normal,
+    )
+    .unwrap();
+    assert_eq!(plan.inner_size, Some((1264, 681)));
+    assert_eq!(plan.position, None);
 }
 
 #[test]

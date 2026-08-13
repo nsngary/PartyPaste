@@ -224,7 +224,7 @@ describe("SettingsPage", () => {
       expect((topmost as HTMLInputElement).checked).toBe(true),
     );
     await user.click(topmost);
-    expect((await screen.findByRole("alert")).textContent).toBe(
+    expect((await screen.findByRole("alert")).textContent).toContain(
       "Could not save this overlay setting.",
     );
     expect(screen.queryByText(/secret\.db/)).toBeNull();

@@ -1,6 +1,6 @@
 import { Pin, PinOff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useWindowSettings } from "../../api/useWindowSettings";
 import type { WindowSettingsApi } from "../../api/window-settings";
 import { IconButton } from "../../components/IconButton";
 import type { GameDto } from "../library/library-api";
@@ -21,66 +21,8 @@ export function OverlayHeader({
   topmostApi,
 }: OverlayHeaderProps) {
   const { t } = useTranslation();
-  const [alwaysOnTop, setAlwaysOnTop] = useState<boolean | null>(null);
-  const [pending, setPending] = useState(true);
-  const [error, setError] = useState(false);
-  const confirmedSequence = useRef(0);
-
-  useEffect(() => {
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    const loadSequence = confirmedSequence.current;
-    setPending(true);
-    void topmostApi
-      .subscribeToWindowSettings?.((settings) => {
-        if (!active) return;
-        confirmedSequence.current += 1;
-        setAlwaysOnTop(settings.alwaysOnTop);
-        setError(false);
-      })
-      .then((stop) => {
-        if (active) unlisten = stop;
-        else stop();
-      });
-    void topmostApi
-      .getWindowSettings()
-      .then((settings) => {
-        if (active && loadSequence === confirmedSequence.current) {
-          setAlwaysOnTop(settings.alwaysOnTop);
-        }
-      })
-      .catch(() => {
-        if (active) setError(true);
-      })
-      .finally(() => {
-        if (active) setPending(false);
-      });
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [topmostApi]);
-
-  async function changeTopmost() {
-    if (alwaysOnTop === null) return;
-    const previous = alwaysOnTop;
-    const mutationSequence = confirmedSequence.current;
-    setPending(true);
-    setError(false);
-    try {
-      const confirmed = await topmostApi.toggleTopmost(!previous);
-      if (mutationSequence === confirmedSequence.current) {
-        setAlwaysOnTop(confirmed);
-      }
-    } catch {
-      if (mutationSequence === confirmedSequence.current) {
-        setAlwaysOnTop(previous);
-        setError(true);
-      }
-    } finally {
-      setPending(false);
-    }
-  }
+  const { alwaysOnTop, error, pending, retry, toggle } =
+    useWindowSettings(topmostApi);
 
   return (
     <header className="pp-overlay__header" data-tauri-drag-region>
@@ -103,7 +45,7 @@ export function OverlayHeader({
       </label>
       <IconButton
         aria-pressed={alwaysOnTop ?? undefined}
-        disabled={pending}
+        disabled={pending || alwaysOnTop === null}
         icon={alwaysOnTop ? <PinOff size={16} /> : <Pin size={16} />}
         label={t(
           alwaysOnTop === null
@@ -112,12 +54,15 @@ export function OverlayHeader({
               ? "overlay.unpin"
               : "overlay.pin",
         )}
-        onClick={() => void changeTopmost()}
+        onClick={() => void toggle()}
         variant="outlined"
       />
       {error ? (
         <span className="pp-overlay__topmost-error" role="alert">
           {t("overlay.preferenceSaveFailed")}
+          <button onClick={retry} type="button">
+            {t("common.retry")}
+          </button>
         </span>
       ) : null}
     </header>

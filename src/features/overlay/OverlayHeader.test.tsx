@@ -131,7 +131,7 @@ describe("OverlayHeader topmost control", () => {
     await user.click(
       await screen.findByRole("button", { name: "Pin overlay" }),
     );
-    expect((await screen.findByRole("alert")).textContent).toBe(
+    expect((await screen.findByRole("alert")).textContent).toContain(
       "Could not save this overlay setting.",
     );
     expect(

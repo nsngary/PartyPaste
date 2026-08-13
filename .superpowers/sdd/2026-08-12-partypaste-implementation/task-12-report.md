@@ -93,3 +93,29 @@ Fresh full gates:
 - Capability assertions and `git diff --check`: pass before commit.
 
 The first Rust GREEN rerun exposed one mechanical missing brace in the tightened visibility predicate; after correcting that exact parse failure, targeted and full gates passed fresh. Real packaged-Windows monitor removal, decorated resize, DPI transition, and cross-window WebView event smoke tests remain outside automated verification.
+
+## Formal review fix round 3: subscription-first settings and DPI minimum convergence
+
+- Extracted one shared `useWindowSettings` hook for Manager and overlay. It awaits listener registration before starting the serialized native read, immediately unregisters a listener that resolves after unmount, and generation-gates read success, read failure, mutation success, and mutation failure against newer native events.
+- Listener registration rejection is handled as a sanitized retryable error rather than an unhandled promise. Failed initial reads retain unknown state; both controls stay disabled, while accessible bilingual retry actions restart subscription and read.
+- The overlay pin no longer exposes a false label or `aria-pressed` state before native confirmation.
+- Runtime recovery now returns an explicit plan containing optional position and optional inner size. It measures decoration deltas and includes them when deciding whether the configured scaled inner minimum can fit a work area.
+- When the OS-enforced minimum inner size plus decorations cannot fit, recovery keeps that minimum, applies only a stable best-visible position, and avoids repeated impossible `set_size` and window-state save loops. Normal overlay resizing still converges through the decorated inner-size plan.
+
+Strict RED/GREEN evidence:
+
+- RED confirmed independent read-before-subscription UI effects and recovery's use of scaled inner minimums as outer dimensions.
+- Targeted GREEN: shared hook/Manager/overlay 3 files / 13 tests; required Cargo Windows suite 21/21.
+- Hook coverage includes events between registration and read, stale read resolve/reject, listener rejection, unmount before registration resolves, and initial-read retry.
+- Geometry coverage includes decorated Manager at 150% on 720p and 200% on 1080p with simulated OS minimum enforcement, plus normal overlay convergence.
+
+Fresh full gates:
+
+- Node 24.15 `npm run verify`: pass; 25 files / 145 tests.
+- Node 24.15 `npm run build`: pass; 1,928 modules transformed.
+- Cargo fmt check: pass.
+- Strict Clippy, all targets/features with warnings denied: pass.
+- Full Rust suite, all targets/features: pass; 87 tests.
+- Capability assertions and `git diff --check`: pass before commit.
+
+Real packaged-Windows listener registration timing and high-DPI decorated-window behavior remain runtime smoke-test concerns.
