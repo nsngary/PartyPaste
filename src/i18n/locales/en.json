@@ -38,13 +38,15 @@
     "noGames": "Create a game in Manager to start adding phrases.",
     "noRecent": "No phrases copied this session.",
     "noPhrases": "No phrases in this game yet.",
+    "pin": "Pin overlay",
     "preview": "Preview",
     "preferenceSaveFailed": "Could not save this overlay setting.",
     "recent": "Recent copies",
     "show": "Show overlay",
     "templateIncomplete": "Complete every variable before copying.",
     "templateInvalid": "This template is invalid and cannot be copied.",
-    "titleOnly": "Title only"
+    "titleOnly": "Title only",
+    "unpin": "Unpin overlay"
   },
   "manager": {
     "allPhrases": "All phrases",

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invokeCommand, type NativeInvoke } from "../../api/commands";
+import {
+  createWindowSettingsApi,
+  type WindowSettingsApi,
+} from "../../api/window-settings";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { type SupportedLocale, setPartyPasteLocale } from "../../i18n";
 import { AboutPage } from "./AboutPage";
@@ -11,26 +14,6 @@ import {
 } from "./BackupSettings";
 import { ShortcutSettings, type ShortcutSettingsApi } from "./ShortcutSettings";
 import { UpdateSettings } from "./UpdateSettings";
-
-export interface WindowSettingsDto {
-  alwaysOnTop: boolean;
-}
-
-export interface WindowSettingsApi {
-  getWindowSettings(): Promise<WindowSettingsDto>;
-  toggleTopmost(enabled: boolean): Promise<boolean>;
-}
-
-export function createWindowSettingsApi(
-  invoke: NativeInvoke = (name, input) => invokeCommand(name, input),
-): WindowSettingsApi {
-  return {
-    getWindowSettings: () =>
-      invoke<WindowSettingsDto>("get_window_settings", {}),
-    toggleTopmost: (alwaysOnTop) =>
-      invoke<boolean>("toggle_topmost", { alwaysOnTop }),
-  };
-}
 
 export interface SettingsPageProps {
   backupApi?: BackupSettingsApi;
@@ -50,10 +33,12 @@ export function SettingsPage({
   const { i18n, t } = useTranslation();
   const locale: SupportedLocale = i18n.language === "en" ? "en" : "zh-TW";
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [topmostPending, setTopmostPending] = useState(true);
   const [preferenceError, setPreferenceError] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setTopmostPending(true);
     void settingsApi
       .getWindowSettings()
       .then((settings) => {
@@ -61,6 +46,9 @@ export function SettingsPage({
       })
       .catch(() => {
         if (active) setPreferenceError(true);
+      })
+      .finally(() => {
+        if (active) setTopmostPending(false);
       });
     return () => {
       active = false;
@@ -71,11 +59,14 @@ export function SettingsPage({
     const previous = alwaysOnTop;
     setAlwaysOnTop(enabled);
     setPreferenceError(false);
+    setTopmostPending(true);
     try {
       setAlwaysOnTop(await settingsApi.toggleTopmost(enabled));
     } catch {
       setAlwaysOnTop(previous);
       setPreferenceError(true);
+    } finally {
+      setTopmostPending(false);
     }
   }
 
@@ -111,6 +102,7 @@ export function SettingsPage({
           <input
             aria-label={t("overlay.alwaysOnTop")}
             checked={alwaysOnTop}
+            disabled={topmostPending}
             onChange={(event) => void changeTopmost(event.target.checked)}
             type="checkbox"
           />

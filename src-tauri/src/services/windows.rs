@@ -1,12 +1,16 @@
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{
+    Arc, Mutex, MutexGuard,
+    atomic::{AtomicBool, Ordering},
+};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{
     App, AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, Runtime, State,
-    WindowEvent,
+    WebviewWindow, WindowEvent,
 };
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use crate::db::Repository;
 use crate::db::models::SettingRecord;
@@ -147,6 +151,23 @@ pub fn clamp_bounds(saved: Bounds, monitors: &[Monitor], minimum: (u32, u32)) ->
     }
 }
 
+pub fn minimum_physical_size(kind: WindowKind, scale_factor: f64) -> (u32, u32) {
+    let minimum = kind.minimum_size();
+    (
+        (f64::from(minimum.0) * scale_factor).round() as u32,
+        (f64::from(minimum.1) * scale_factor).round() as u32,
+    )
+}
+
+pub fn recovery_adjustment(
+    current: Bounds,
+    monitors: &[Monitor],
+    minimum: (u32, u32),
+) -> Option<Bounds> {
+    let recovered = clamp_bounds(current, monitors, minimum);
+    (recovered != current).then_some(recovered)
+}
+
 fn nearest_monitor(saved: Bounds, monitors: &[Monitor]) -> Option<&Monitor> {
     monitors.iter().max_by_key(|monitor| {
         let work = monitor.work_area;
@@ -269,12 +290,19 @@ pub fn toggle_overlay<R: Runtime>(app: &AppHandle<R>) {
 pub fn install_window_lifecycle<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     for kind in [WindowKind::Overlay, WindowKind::Manager] {
         if let Some(window) = app.get_webview_window(kind.label()) {
-            let close_window = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
+            let event_window = window.clone();
+            let recovering = Arc::new(AtomicBool::new(false));
+            window.on_window_event(move |event| match event {
+                WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = close_window.hide();
+                    let _ = event_window.hide();
                 }
+                WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::ScaleFactorChanged { .. } => {
+                    let _ = recover_webview_window_bounds(&event_window, kind, recovering.as_ref());
+                }
+                _ => {}
             });
         }
     }
@@ -286,43 +314,71 @@ pub fn recover_window_bounds<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()
         let Some(window) = app.get_webview_window(kind.label()) else {
             continue;
         };
-        let monitors = window
-            .available_monitors()?
-            .into_iter()
-            .map(|monitor| {
-                let area = monitor.work_area();
-                Monitor {
-                    work_area: Bounds {
-                        x: area.position.x,
-                        y: area.position.y,
-                        width: area.size.width,
-                        height: area.size.height,
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-        let position = window.outer_position()?;
-        let size = window.outer_size()?;
-        let scale = window.scale_factor()?;
-        let minimum = kind.minimum_size();
-        let minimum = (
-            (f64::from(minimum.0) * scale).round() as u32,
-            (f64::from(minimum.1) * scale).round() as u32,
-        );
-        let recovered = clamp_bounds(
-            Bounds {
-                x: position.x,
-                y: position.y,
-                width: size.width,
-                height: size.height,
-            },
-            &monitors,
-            minimum,
-        );
-        window.set_size(PhysicalSize::new(recovered.width, recovered.height))?;
-        window.set_position(PhysicalPosition::new(recovered.x, recovered.y))?;
+        recover_webview_window_bounds(&window, kind, &AtomicBool::new(false))?;
     }
     Ok(())
+}
+
+struct RecoveryGuard<'a>(&'a AtomicBool);
+
+impl Drop for RecoveryGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn recover_webview_window_bounds<R: Runtime>(
+    window: &WebviewWindow<R>,
+    kind: WindowKind,
+    recovering: &AtomicBool,
+) -> tauri::Result<bool> {
+    if recovering
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(false);
+    }
+    let _guard = RecoveryGuard(recovering);
+    let monitors = window
+        .available_monitors()?
+        .into_iter()
+        .map(|monitor| {
+            let area = monitor.work_area();
+            Monitor {
+                work_area: Bounds {
+                    x: area.position.x,
+                    y: area.position.y,
+                    width: area.size.width,
+                    height: area.size.height,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let position = window.outer_position()?;
+    let size = window.outer_size()?;
+    let current = Bounds {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    let Some(recovered) = recovery_adjustment(
+        current,
+        &monitors,
+        minimum_physical_size(kind, window.scale_factor()?),
+    ) else {
+        return Ok(false);
+    };
+    if (recovered.width, recovered.height) != (current.width, current.height) {
+        window.set_size(PhysicalSize::new(recovered.width, recovered.height))?;
+    }
+    if (recovered.x, recovered.y) != (current.x, current.y) {
+        window.set_position(PhysicalPosition::new(recovered.x, recovered.y))?;
+    }
+    let _ = window
+        .app_handle()
+        .save_window_state(StateFlags::SIZE | StateFlags::POSITION);
+    Ok(true)
 }
 
 pub fn schedule_bounds_recovery<R: Runtime>(app: &App<R>) {

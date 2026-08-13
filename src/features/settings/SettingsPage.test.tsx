@@ -10,6 +10,50 @@ afterEach(() => {
 });
 
 describe("SettingsPage", () => {
+  it("prevents a stale rapid topmost toggle while persistence is pending", async () => {
+    const user = userEvent.setup();
+    let resolveToggle: (value: boolean) => void = () => undefined;
+    const toggle = new Promise<boolean>((resolve) => {
+      resolveToggle = resolve;
+    });
+    const settingsApi = {
+      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: false }),
+      toggleTopmost: vi.fn().mockReturnValue(toggle),
+    };
+    render(
+      <AppProviders i18n={createPartyPasteI18n("en")}>
+        <SettingsPage
+          backupApi={{
+            exportBackup: vi.fn(),
+            previewImport: vi.fn(),
+            replaceFromBackup: vi.fn(),
+          }}
+          fileDialog={{ openBackup: vi.fn(), saveBackup: vi.fn() }}
+          settingsApi={settingsApi}
+          shortcutApi={{
+            getShortcuts: vi.fn().mockResolvedValue({
+              overlay: "Ctrl+Shift+Space",
+              phrases: {},
+            }),
+            setOverlayShortcut: vi.fn(),
+          }}
+        />
+      </AppProviders>,
+    );
+    const topmost = await screen.findByRole("checkbox", {
+      name: "Always on top",
+    });
+    await user.click(topmost);
+    expect((topmost as HTMLInputElement).disabled).toBe(true);
+    await user.click(topmost);
+    expect(settingsApi.toggleTopmost).toHaveBeenCalledTimes(1);
+    resolveToggle(true);
+    await waitFor(() =>
+      expect((topmost as HTMLInputElement).disabled).toBe(false),
+    );
+    expect((topmost as HTMLInputElement).checked).toBe(true);
+  });
+
   it("switches language immediately and persists the overlay topmost preference", async () => {
     const user = userEvent.setup();
     const i18n = createPartyPasteI18n("zh-TW");

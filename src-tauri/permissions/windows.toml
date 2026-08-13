@@ -50,3 +50,8 @@ commands.allow = [
   "copy_phrase",
   "get_recent_copies"
 ]
+
+[[permission]]
+identifier = "overlay-window-commands"
+description = "Read and change only the compact overlay topmost preference."
+commands.allow = ["get_window_settings", "toggle_topmost"]

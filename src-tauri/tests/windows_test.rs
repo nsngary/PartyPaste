@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use partypaste_lib::services::windows::{
     Bounds, LifecycleEffect, LifecycleEvent, Monitor, OVERLAY_TOPMOST_KEY, WindowKind,
-    clamp_bounds, default_overlay_topmost, lifecycle_effects, tray_action,
+    clamp_bounds, default_overlay_topmost, lifecycle_effects, minimum_physical_size,
+    recovery_adjustment, tray_action,
 };
 
 #[test]
@@ -164,6 +165,69 @@ fn windows_saved_bounds_remain_meaningfully_visible_when_dpi_or_work_area_shrink
 }
 
 #[test]
+fn windows_runtime_recovery_reclamps_after_dpi_and_monitor_changes_then_becomes_a_no_op() {
+    let remaining_monitor = [Monitor {
+        work_area: Bounds {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+    }];
+    let minimum = minimum_physical_size(WindowKind::Overlay, 1.5);
+    assert_eq!(minimum, (360, 240));
+
+    let recovered = recovery_adjustment(
+        Bounds {
+            x: 1800,
+            y: 90,
+            width: 450,
+            height: 630,
+        },
+        &remaining_monitor,
+        minimum,
+    );
+    assert_eq!(
+        recovered,
+        Some(Bounds {
+            x: 830,
+            y: 90,
+            width: 450,
+            height: 630,
+        })
+    );
+    assert_eq!(
+        recovery_adjustment(recovered.unwrap(), &remaining_monitor, minimum),
+        None
+    );
+}
+
+#[test]
+fn windows_runtime_recovery_does_nothing_for_already_visible_bounds() {
+    let monitor = [Monitor {
+        work_area: Bounds {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        },
+    }];
+    assert_eq!(
+        recovery_adjustment(
+            Bounds {
+                x: -1200,
+                y: 100,
+                width: 1120,
+                height: 720,
+            },
+            &monitor,
+            minimum_physical_size(WindowKind::Manager, 1.0),
+        ),
+        None
+    );
+}
+
+#[test]
 fn windows_defaults_and_minimums_match_the_desktop_contract() {
     assert_eq!(WindowKind::Overlay.default_size(), (300, 420));
     assert_eq!(WindowKind::Overlay.minimum_size(), (240, 160));
@@ -189,6 +253,8 @@ fn windows_capability_files_keep_backup_and_update_installation_out_of_the_overl
     ] {
         assert!(!overlay.contains(forbidden), "overlay exposed {forbidden}");
     }
+    assert!(overlay.contains("overlay-window-commands"));
+    assert!(permissions.contains("commands.allow = [\"get_window_settings\", \"toggle_topmost\"]"));
     for required in [
         "export_backup",
         "preview_import",

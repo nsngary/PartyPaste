@@ -10,7 +10,8 @@
 }
 
 .pp-overlay__header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 36px;
   align-items: center;
   justify-content: space-between;
@@ -20,13 +21,23 @@
   background: var(--surface-canvas);
 }
 
+.pp-overlay__game-select {
+  min-width: 0;
+}
+
 .pp-overlay__header select {
-  width: min(10rem, 48vw);
+  width: 100%;
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
+}
+
+.pp-overlay__topmost-error {
+  grid-column: 1 / -1;
+  color: var(--color-danger-400);
+  font-size: 0.75rem;
 }
 
 .pp-overlay > .pp-segmented {
@@ -269,10 +280,6 @@
 @media (max-width: 260px) {
   .pp-brand-label {
     font-size: 0.55rem;
-  }
-
-  .pp-overlay__header select {
-    width: 8rem;
   }
 
   .pp-overlay > .pp-segmented .pp-segmented__option {

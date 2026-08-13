@@ -42,3 +42,28 @@ Final targeted GREEN:
 Formal review found and this implementation corrected unstable default Settings API identities, backup export/import path coupling, a backup-visible topmost preference key, a hard-coded About version, and template shortcuts incorrectly toggling an already-visible overlay closed. The exact Cargo `windows` filter now executes all 12 Windows tests rather than filtering them out.
 
 Automated tests cover lifecycle policy, capability manifests, and injected monitor geometry. A packaged Windows build was not manually exercised against a real system tray, global shortcuts, multi-monitor topology, or DPI transition in this task; signing, packaging, and updater installation remain Task 13 work.
+
+## Formal review fix round 1: live recovery and overlay pin control
+
+- Manager and overlay now reclamp at runtime on Tauri move, resize, and scale-factor events. The shared recovery controller applies DPI-scaled minimums, changes only differing bounds, guards reentrant recovery, and saves corrected size/position through the existing window-state plugin.
+- Pure recovery tests cover monitor removal plus DPI change, repeated-event no-op behavior, already-visible bounds, and the original exact window defaults/minimums.
+- The overlay header now exposes a compact localized pin/unpin `IconButton`, loads current native state, disables during initial load and persistence, reflects the confirmed native result, and presents sanitized failures without exposing native details.
+- Manager Settings and overlay topmost controls prevent overlapping writes while a deferred request is pending, so an older result cannot overwrite a newer intent.
+- Overlay capability access was expanded only with a dedicated permission for `get_window_settings` and `toggle_topmost`; backup, dialog, and updater installation remain excluded.
+
+Strict TDD evidence:
+
+- Runtime recovery RED: `windows_test` failed with unresolved `minimum_physical_size` and `recovery_adjustment` controller imports.
+- Overlay/Manager RED: the overlay pin/unpin controls were absent and the Manager checkbox remained enabled during a deferred write.
+- Targeted GREEN: 10 overlay/settings files / 36 tests; required Cargo `windows` filter 14/14; focused capability assertion 1/1.
+
+Fresh full gates:
+
+- Node 24.15 `npm run verify`: pass; 24 files / 137 tests.
+- Node 24.15 `npm run build`: pass; 1,927 modules transformed.
+- Cargo fmt check: pass.
+- Strict Clippy, all targets/features with warnings denied: pass.
+- Full Rust suite, all targets/features: pass; 80 tests.
+- `git diff --check`: pass before commit.
+
+The first full frontend gate stopped at Biome's deterministic import-order rule in `overlay-main.tsx`. After isolating that exact cause, imports were reordered and the complete fresh gate above passed. A real packaged-Windows monitor/DPI transition and tray/global-shortcut smoke test remains outside this automated review round.

@@ -3,5 +3,10 @@
   "identifier": "overlay",
   "description": "Least-privilege native access for the compact phrase overlay.",
   "windows": ["overlay"],
-  "permissions": ["core:default", "core:event:default", "overlay-commands"]
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "overlay-commands",
+    "overlay-window-commands"
+  ]
 }

@@ -38,13 +38,15 @@
     "noGames": "請先在內容管理中建立遊戲並新增片語。",
     "noRecent": "這次使用期間還沒有複製片語。",
     "noPhrases": "這個遊戲還沒有片語。",
+    "pin": "釘選浮動視窗",
     "preview": "預覽",
     "preferenceSaveFailed": "無法儲存這項浮動視窗設定。",
     "recent": "最近複製",
     "show": "顯示浮動視窗",
     "templateIncomplete": "請填完所有變數後再複製。",
     "templateInvalid": "這個範本格式無效，無法複製。",
-    "titleOnly": "僅顯示標題"
+    "titleOnly": "僅顯示標題",
+    "unpin": "取消釘選浮動視窗"
   },
   "manager": {
     "allPhrases": "所有片語",
