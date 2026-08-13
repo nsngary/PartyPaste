@@ -32,5 +32,16 @@
         "alwaysOnTop": true
       }
     ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "Local-first phrase overlay for Windows",
+    "longDescription": "PartyPaste is a local-first desktop phrase overlay for Windows.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

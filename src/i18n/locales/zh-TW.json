@@ -207,7 +207,8 @@
     "shortcuts": "快捷鍵",
     "title": "設定",
     "topmostDescription": "只讓精簡浮動視窗維持在其他視窗上方。",
-    "updateTaskBoundary": "已簽署的更新功能會在發行設定階段啟用。",
+    "manualUpdateInstructions": "安裝版：請手動執行新版安裝程式。免安裝版：請先匯出備份，再更換整個免安裝資料夾。",
+    "updateTaskBoundary": "已簽署的線上更新功能暫緩實作；此自用版本不會檢查、下載或安裝更新。",
     "updates": "更新",
     "version": "版本"
   },

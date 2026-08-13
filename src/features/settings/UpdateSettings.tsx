@@ -10,6 +10,7 @@ export function UpdateSettings() {
     >
       <h2 id="settings-updates">{t("settings.updates")}</h2>
       <p>{t("settings.updateTaskBoundary")}</p>
+      <p>{t("settings.manualUpdateInstructions")}</p>
       <Button disabled>{t("settings.checkForUpdates")}</Button>
     </section>
   );

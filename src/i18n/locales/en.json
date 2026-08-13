@@ -207,7 +207,8 @@
     "shortcuts": "Shortcuts",
     "title": "Settings",
     "topmostDescription": "Keeps only the compact overlay above other windows.",
-    "updateTaskBoundary": "Signed updates will be enabled during release setup.",
+    "manualUpdateInstructions": "Installed: run a newer installer manually. Portable: export a backup, then replace the whole portable folder.",
+    "updateTaskBoundary": "Signed online updates are deferred. This self-use build does not check, download, or install updates.",
     "updates": "Updates",
     "version": "Version"
   },
