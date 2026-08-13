@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { WindowSettingsApi } from "../../api/window-settings";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { parseTemplate } from "../../domain/template";
 import type { GameDto, LibrarySnapshot } from "../library/library-api";
@@ -49,12 +50,14 @@ export interface OverlayAppProps {
   subscribeToShortcutEvents: (
     handler: (event: ShortcutEventPayload) => void,
   ) => Promise<Unlisten>;
+  topmostApi: WindowSettingsApi;
 }
 
 export function OverlayApp({
   copyApi,
   libraryApi,
   subscribeToShortcutEvents,
+  topmostApi,
 }: OverlayAppProps) {
   const { t } = useTranslation();
   const [library, setLibrary] = useState<LibrarySnapshot | null>(null);
@@ -322,11 +325,15 @@ export function OverlayApp({
             setOpenTemplatePhraseId(null);
           }}
           selectedGameId={selectedGameId ?? ""}
+          topmostApi={topmostApi}
         />
       ) : (
-        <header className="pp-overlay__header">
-          <strong className="pp-brand-label">{t("app.brand")}</strong>
-        </header>
+        <OverlayHeader
+          games={[]}
+          onSelectGame={() => undefined}
+          selectedGameId=""
+          topmostApi={topmostApi}
+        />
       )}
 
       {loadError ? (

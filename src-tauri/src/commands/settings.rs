@@ -207,10 +207,16 @@ pub fn route_shortcut(app: &AppHandle, accelerator: &str) {
             }
         }
         ShortcutEvent::CopyPhraseFailed { .. } => return,
-        ShortcutEvent::ShowOverlay { .. } => {
-            if let Some(overlay) = app.get_webview_window("overlay") {
-                let _ = overlay.show();
-                let _ = overlay.set_focus();
+        ShortcutEvent::ShowOverlay {
+            open_template_phrase_id,
+        } => {
+            if open_template_phrase_id.is_some() {
+                crate::services::windows::apply_lifecycle(
+                    app,
+                    crate::services::windows::LifecycleEvent::ShowOverlay,
+                );
+            } else {
+                crate::services::windows::toggle_overlay(app);
             }
         }
     }

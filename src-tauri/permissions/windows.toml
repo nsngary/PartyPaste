@@ -1,0 +1,57 @@
+[[permission]]
+identifier = "manager-commands"
+description = "Manager data editing, settings, backup, and window preference commands."
+commands.allow = [
+  "get_library",
+  "create_game",
+  "update_game",
+  "set_overlay_display_mode",
+  "delete_game",
+  "create_group",
+  "update_group",
+  "set_group_collapsed",
+  "delete_group",
+  "create_phrase",
+  "update_phrase",
+  "delete_phrase",
+  "duplicate_phrase",
+  "move_phrase",
+  "reorder_games",
+  "reorder_groups",
+  "reorder_phrases",
+  "reorder_favorites",
+  "reorder_variable_definitions",
+  "set_favorite",
+  "search_phrases",
+  "undo_operation",
+  "get_game_delete_impact",
+  "get_group_delete_impact",
+  "list_variable_definitions",
+  "save_variable_definition",
+  "reorder_variable_presets",
+  "delete_variable_definition",
+  "export_backup",
+  "preview_import",
+  "replace_from_backup",
+  "get_shortcuts",
+  "set_overlay_shortcut",
+  "set_phrase_shortcut",
+  "get_window_settings",
+  "toggle_topmost"
+]
+
+[[permission]]
+identifier = "overlay-commands"
+description = "Read and copy commands required by the compact overlay."
+commands.allow = [
+  "get_library",
+  "set_overlay_display_mode",
+  "set_group_collapsed",
+  "copy_phrase",
+  "get_recent_copies"
+]
+
+[[permission]]
+identifier = "overlay-window-commands"
+description = "Read and change only the compact overlay topmost preference."
+commands.allow = ["get_window_settings", "toggle_topmost"]

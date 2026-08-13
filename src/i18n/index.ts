@@ -6,6 +6,7 @@ import zhTW from "./locales/zh-TW.json";
 
 export const supportedLocales = ["zh-TW", "en"] as const;
 export type SupportedLocale = (typeof supportedLocales)[number];
+export const localeStorageKey = "partypaste.locale";
 
 export function resolveLocale(locale?: string): SupportedLocale {
   const normalized = locale?.toLowerCase();
@@ -16,7 +17,18 @@ export function resolveLocale(locale?: string): SupportedLocale {
     normalized?.startsWith("zh-hant")
   )
     return "zh-TW";
-  return "en";
+  if (normalized === "en" || normalized?.startsWith("en-")) return "en";
+  return "zh-TW";
+}
+
+function persistedLocale(): SupportedLocale | undefined {
+  try {
+    const storage = globalThis.localStorage;
+    const value = storage?.getItem(localeStorageKey);
+    return supportedLocales.find((locale) => locale === value);
+  } catch {
+    return undefined;
+  }
 }
 
 const resources = {
@@ -28,8 +40,11 @@ export function createPartyPasteI18n(locale?: string): i18n {
   const instance = createInstance();
   void instance.init({
     resources,
-    lng: resolveLocale(locale),
-    fallbackLng: "en",
+    lng:
+      locale === undefined
+        ? (persistedLocale() ?? "zh-TW")
+        : resolveLocale(locale),
+    fallbackLng: "zh-TW",
     supportedLngs: [...supportedLocales],
     interpolation: { escapeValue: false },
     initAsync: false,
@@ -38,9 +53,19 @@ export function createPartyPasteI18n(locale?: string): i18n {
   return instance;
 }
 
-const defaultI18n = createPartyPasteI18n(
-  typeof navigator === "undefined" ? undefined : navigator.language,
-);
+export async function setPartyPasteLocale(
+  instance: i18n,
+  locale: SupportedLocale,
+): Promise<void> {
+  try {
+    globalThis.localStorage?.setItem(localeStorageKey, locale);
+  } catch {
+    // A storage failure must not prevent the current window from switching.
+  }
+  await instance.changeLanguage(locale);
+}
+
+const defaultI18n = createPartyPasteI18n();
 
 export interface AppProvidersProps extends PropsWithChildren {
   i18n?: i18n;
