@@ -55,6 +55,29 @@ function Set-ZipEntryBytes {
 }
 
 try {
+    $currentDriveRoot = [System.IO.Path]::GetPathRoot($applicationPath)
+    if (-not (Normalize-PartyPasteRootedPath -Path $currentDriveRoot).Equals($currentDriveRoot, [StringComparison]::Ordinal)) {
+        throw 'Drive-root normalization removed the root separator.'
+    }
+    if (-not (Test-PathWithinDirectory -Path (Join-Path $currentDriveRoot 'child') -Directory $currentDriveRoot)) {
+        throw 'Drive-root containment did not recognize a child path.'
+    }
+    $uncRoot = '\\server\share\'
+    if (-not (Normalize-PartyPasteRootedPath -Path $uncRoot).Equals($uncRoot, [StringComparison]::Ordinal)) {
+        throw 'UNC-share-root normalization removed the share root separator.'
+    }
+    if (-not (Test-PathWithinDirectory -Path '\\server\share\child' -Directory $uncRoot)) {
+        throw 'UNC-share-root containment did not recognize a child path.'
+    }
+    $extendedDriveRoot = "\\?\$currentDriveRoot"
+    if (-not (Normalize-PartyPasteRootedPath -Path $extendedDriveRoot).Equals($extendedDriveRoot, [StringComparison]::Ordinal)) {
+        throw 'Extended drive-root normalization removed the root separator.'
+    }
+    $volumeRoot = '\\?\Volume{00000000-0000-0000-0000-000000000000}\'
+    if (-not (Normalize-PartyPasteRootedPath -Path $volumeRoot).Equals($volumeRoot, [StringComparison]::Ordinal)) {
+        throw 'Volume-GUID-root normalization removed the root separator.'
+    }
+
     Test-PartyPastePeIdentity -Path $applicationPath -ExpectedMachine 0x8664 -ExpectedVersion $contract.Version -Label 'Portable application fixture'
     Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedVersion $contract.Version -Label 'NSIS installer fixture'
     if ((ConvertTo-PartyPasteWindowsVersion '0.1.0') -ne '0.1.0.0') { throw 'Three-part Windows version normalization failed.' }
@@ -97,6 +120,15 @@ try {
         & $packageScript -ApplicationExecutable $applicationPath -NsisInstaller $aliasedInstaller -OutputDirectory $installerAlias
     }
     if (-not (Test-Path -LiteralPath $aliasedInstaller -PathType Leaf)) { throw 'Aliased installer input was deleted.' }
+
+    $driveRootSourceHash = (Get-FileHash -LiteralPath $applicationPath -Algorithm SHA256).Hash
+    Assert-Throws -Name 'drive-root output contains application input' -Action {
+        & $packageScript -ApplicationExecutable $applicationPath -NsisInstaller $installerPath -OutputDirectory $currentDriveRoot
+    }
+    if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $applicationPath -Algorithm SHA256).Hash -cne $driveRootSourceHash) {
+        throw 'Drive-root guard did not reject before cleanup or preserve the source byte-for-byte.'
+    }
 
     $junctionTarget = Join-Path $testRoot 'junction-target'
     [System.IO.Directory]::CreateDirectory($junctionTarget) | Out-Null
@@ -194,7 +226,7 @@ try {
     [System.IO.File]::WriteAllText($uppercaseNameManifest, $uppercaseNameText.Replace('PartyPaste_', 'PARTYPASTE_'), [Text.UTF8Encoding]::new($false))
     Assert-Throws -Name 'uppercase manifest artifact name' -Action { & $verifyScript -OutputDirectory $uppercaseNameSet }
 
-    Write-Output 'Packaging negative tests passed: identity, machine, version, signature, notices, direct/reparse aliases, Cargo metadata, manifest, casing, and exact artifact set.'
+    Write-Output 'Packaging negative tests passed: roots, identity, machine, version, signature, notices, direct/reparse aliases, Cargo metadata, manifest, casing, and exact artifact set.'
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

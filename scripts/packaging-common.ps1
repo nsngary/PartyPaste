@@ -54,7 +54,8 @@ namespace PartyPastePackaging {
                 string resolved = buffer.ToString();
                 if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
                     return @"\\" + resolved.Substring(8);
-                if (resolved.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                if (resolved.Length >= 7 && resolved.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)
+                    && Char.IsLetter(resolved[4]) && resolved[5] == ':' && resolved[6] == '\\')
                     return resolved.Substring(4);
                 return resolved;
             }
@@ -148,29 +149,49 @@ function Test-PartyPastePeIdentity {
     }
 }
 
-function Resolve-PartyPasteFinalPath {
+function Normalize-PartyPasteRootedPath {
     param([Parameter(Mandatory)] [string]$Path)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+    if ([string]::IsNullOrEmpty($root) -and $fullPath -cmatch '^(?<root>\\\\\?\\Volume\{[^}]+\}\\)') {
+        $root = $Matches['root']
+    }
+    if ([string]::IsNullOrEmpty($root)) { throw "Path is not rooted: $Path" }
+    $protectedLength = $root.Length
+    if ($fullPath.Length -gt $protectedLength -and
+        ($fullPath[$protectedLength] -eq '\' -or $fullPath[$protectedLength] -eq '/')) {
+        $protectedLength++
+    }
+    while ($fullPath.Length -gt $protectedLength -and
+        ($fullPath.EndsWith('\', [StringComparison]::Ordinal) -or $fullPath.EndsWith('/', [StringComparison]::Ordinal))) {
+        $fullPath = $fullPath.Substring(0, $fullPath.Length - 1)
+    }
+    $fullPath
+}
+
+function Resolve-PartyPasteFinalPath {
+    param([Parameter(Mandatory)] [string]$Path)
+    $fullPath = Normalize-PartyPasteRootedPath -Path $Path
     if (-not (Test-Path -LiteralPath $fullPath)) { throw "Path does not exist: $fullPath" }
-    [PartyPastePackaging.NativePath]::Resolve($fullPath).TrimEnd('\', '/')
+    Normalize-PartyPasteRootedPath -Path ([PartyPastePackaging.NativePath]::Resolve($fullPath))
 }
 
 function Resolve-PartyPasteFinalPathFromExistingAncestor {
     param([Parameter(Mandatory)] [string]$Path)
-    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $fullPath = Normalize-PartyPasteRootedPath -Path $Path
     $remaining = [System.Collections.Generic.Stack[string]]::new()
     $cursor = $fullPath
     while (-not (Test-Path -LiteralPath $cursor)) {
-        $leaf = [System.IO.Path]::GetFileName($cursor.TrimEnd('\', '/'))
+        $leaf = [System.IO.Path]::GetFileName($cursor)
         if ([string]::IsNullOrEmpty($leaf)) { throw "No existing ancestor for path: $fullPath" }
         $remaining.Push($leaf)
-        $parent = [System.IO.Path]::GetDirectoryName($cursor.TrimEnd('\', '/'))
-        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor) { throw "No existing ancestor for path: $fullPath" }
-        $cursor = $parent
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrEmpty($parent) -or $parent.Equals($cursor, [StringComparison]::Ordinal)) { throw "No existing ancestor for path: $fullPath" }
+        $cursor = Normalize-PartyPasteRootedPath -Path $parent
     }
     $resolved = Resolve-PartyPasteFinalPath -Path $cursor
     while ($remaining.Count -gt 0) { $resolved = Join-Path $resolved $remaining.Pop() }
-    [System.IO.Path]::GetFullPath($resolved).TrimEnd('\', '/')
+    Normalize-PartyPasteRootedPath -Path $resolved
 }
 
 function Test-PathWithinDirectory {
@@ -178,8 +199,14 @@ function Test-PathWithinDirectory {
         [Parameter(Mandatory)] [string]$Path,
         [Parameter(Mandatory)] [string]$Directory
     )
-    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    $fullDirectory = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
+    $fullPath = Normalize-PartyPasteRootedPath -Path $Path
+    $fullDirectory = Normalize-PartyPasteRootedPath -Path $Directory
+    $directoryPrefix = if ($fullDirectory.EndsWith('\', [StringComparison]::Ordinal) -or
+        $fullDirectory.EndsWith('/', [StringComparison]::Ordinal)) {
+        $fullDirectory
+    } else {
+        $fullDirectory + [System.IO.Path]::DirectorySeparatorChar
+    }
     $fullPath.Equals($fullDirectory, [StringComparison]::OrdinalIgnoreCase) -or
-        $fullPath.StartsWith($fullDirectory + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+        $fullPath.StartsWith($directoryPrefix, [StringComparison]::OrdinalIgnoreCase)
 }
