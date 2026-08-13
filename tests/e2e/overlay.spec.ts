@@ -51,7 +51,13 @@ test("switches between compact title and full-sentence display", async ({
 test("toggles always-on-top through the native command boundary", async ({
   page,
 }) => {
-  await page.locator('.pp-overlay__header button[aria-pressed="true"]').click();
+  await page.evaluate(() => localStorage.setItem("partypaste.locale", "en"));
+  await page.reload();
+  await expect(page.getByRole("button", { name: "收購卷軸" })).toBeVisible();
+  const topmostButton = page.locator(".pp-overlay__header .pp-icon-button");
+  await expect(topmostButton).toHaveAttribute("aria-pressed", "true");
+  await expect(topmostButton).toHaveAccessibleName("Unpin overlay");
+  await topmostButton.click();
   await expect
     .poll(
       async () =>
@@ -60,4 +66,10 @@ test("toggles always-on-top through the native command boundary", async ({
         ).length,
     )
     .toBe(1);
+  const call = (await bridgeCalls(page)).find(
+    ({ command }) => command === "toggle_topmost",
+  );
+  expect(call?.input).toEqual({ alwaysOnTop: false });
+  await expect(topmostButton).toHaveAttribute("aria-pressed", "false");
+  await expect(topmostButton).toHaveAccessibleName("Pin overlay");
 });

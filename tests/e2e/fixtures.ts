@@ -9,6 +9,7 @@ export async function installFakeBridge(page: Page) {
     const recent: Array<Record<string, unknown>> = [];
     let alwaysOnTop = true;
     let overlayShortcut = "Ctrl+Shift+Space";
+    let backupPreview: { path: string; previewToken: string } | undefined;
     let callbackId = 0;
     const callbacks = new Map<number, (payload: unknown) => void>();
     const undo = () => ({
@@ -74,9 +75,13 @@ export async function installFakeBridge(page: Page) {
           if (command === "plugin:dialog|open")
             return "C:\\Temp\\library-v1.json";
           if (command === "export_backup") return null;
-          if (command === "preview_import")
-            return {
+          if (command === "preview_import") {
+            backupPreview = {
+              path: String(input.path),
               previewToken: "preview-e2e",
+            };
+            return {
+              previewToken: backupPreview.previewToken,
               expiresAt: Date.now() + 60_000,
               gameCount: library.games.length,
               groupCount: library.groups.length,
@@ -86,7 +91,22 @@ export async function installFakeBridge(page: Page) {
               phraseVariableRefCount: library.phraseVariableRefs.length,
               shortcutConflictCount: 0,
             };
-          if (command === "replace_from_backup") return null;
+          }
+          if (command === "replace_from_backup") {
+            if (
+              !backupPreview ||
+              input.path !== backupPreview.path ||
+              input.previewToken !== backupPreview.previewToken
+            ) {
+              throw {
+                code: "backup_invalid",
+                messageKey: "errors.backupInvalid",
+                details: { field: "backup" },
+              };
+            }
+            backupPreview = undefined;
+            return null;
+          }
           if (command === "copy_phrase") {
             const phrase = library.phrases.find(
               (item: { id: string }) => item.id === input.phraseId,

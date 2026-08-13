@@ -6,6 +6,21 @@ import { installFakeBridge } from "./fixtures";
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
+async function expectWithinViewport(
+  locator: ReturnType<import("playwright/test").Page["locator"]>,
+  viewport: { width: number; height: number },
+) {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box?.x).toBeGreaterThanOrEqual(0);
+  expect(box?.y).toBeGreaterThanOrEqual(0);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(
+    viewport.height,
+  );
+}
+
 for (const entry of ["/", "/overlay.html"] as const) {
   test(`${entry} has no serious axe violations`, async ({ page }) => {
     await installFakeBridge(page);
@@ -72,7 +87,9 @@ for (const sample of [
     locale: "zh-TW",
   },
 ] as const) {
-  test(`captures ${sample.name}`, async ({ browser }, testInfo) => {
+  test(`keeps critical UI usable at ${sample.name}`, async ({
+    browser,
+  }, testInfo) => {
     const context = await browser.newContext({
       deviceScaleFactor: sample.scale,
       locale: sample.locale,
@@ -86,12 +103,76 @@ for (const sample of [
     );
     await page.goto(`http://127.0.0.1:4173${sample.path}`);
     await page.locator("main").waitFor();
-    const horizontalOverflow = await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth -
-        document.documentElement.clientWidth,
+    const viewport = { width: sample.width, height: sample.height };
+    const layout = await page.evaluate(() => ({
+      bodyClientWidth: document.body.clientWidth,
+      bodyOverflowY: getComputedStyle(document.body).overflowY,
+      bodyScrollHeight: document.body.scrollHeight,
+      documentClientHeight: document.documentElement.clientHeight,
+      documentClientWidth: document.documentElement.clientWidth,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      pixelRatio: window.devicePixelRatio,
+    }));
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(
+      layout.documentClientWidth,
     );
-    expect(horizontalOverflow).toBeLessThanOrEqual(0);
+    expect(layout.bodyClientWidth).toBeLessThanOrEqual(viewport.width);
+    expect(layout.pixelRatio).toBe(sample.scale);
+
+    if (sample.path === "/") {
+      await expectWithinViewport(page.locator(".pp-game-sidebar"), viewport);
+      await expectWithinViewport(
+        page.locator(".pp-game-sidebar nav button").first(),
+        viewport,
+      );
+      await expectWithinViewport(
+        page.locator(".pp-phrase-toolbar__top .pp-button"),
+        viewport,
+      );
+      await expectWithinViewport(page.locator(".pp-search"), viewport);
+      await expectWithinViewport(
+        page.locator(".pp-content-actions .pp-button"),
+        viewport,
+      );
+      await expectWithinViewport(
+        page.locator(".pp-phrase-card").first(),
+        viewport,
+      );
+      await expect(page.locator(".pp-manager")).toHaveCSS("overflow", "hidden");
+      await expect(page.locator(".pp-manager__content")).toHaveCSS(
+        "overflow",
+        "auto",
+      );
+      if (sample.width >= 1000) {
+        await expectWithinViewport(
+          page.locator(".pp-manager__inspector"),
+          viewport,
+        );
+      }
+    } else {
+      await expectWithinViewport(
+        page.locator(".pp-overlay__game-select select"),
+        viewport,
+      );
+      await expectWithinViewport(
+        page.locator(".pp-overlay__header .pp-icon-button"),
+        viewport,
+      );
+      await expectWithinViewport(
+        page.locator(".pp-segmented").first(),
+        viewport,
+      );
+      await expectWithinViewport(
+        page.locator(".pp-phrase-row").first(),
+        viewport,
+      );
+      expect(layout.documentScrollHeight).toBeGreaterThanOrEqual(
+        layout.documentClientHeight,
+      );
+      expect(layout.bodyScrollHeight).toBeGreaterThanOrEqual(viewport.height);
+      expect(["auto", "visible"]).toContain(layout.bodyOverflowY);
+    }
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath(`${sample.name}.png`),

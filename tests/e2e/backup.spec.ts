@@ -38,6 +38,57 @@ test("confirms export and validates before complete backup replacement", async (
     commands.indexOf("replace_from_backup"),
   );
   expect(commands).toContain("export_backup");
+  const replaceCall = (await bridgeCalls(page)).find(
+    ({ command }) => command === "replace_from_backup",
+  );
+  expect(replaceCall?.input).toEqual({
+    path: "C:\\Temp\\library-v1.json",
+    previewToken: "preview-e2e",
+  });
+});
+
+test("fake native boundary rejects a missing or mismatched preview token", async ({
+  page,
+}) => {
+  const outcomes = await page.evaluate(async () => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke(
+            command: string,
+            input: Record<string, unknown>,
+          ): Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__.invoke;
+    const preview = (await invoke("preview_import", {
+      path: "C:\\Temp\\library-v1.json",
+    })) as { previewToken: string };
+    const attempt = async (input: Record<string, unknown>) => {
+      try {
+        await invoke("replace_from_backup", input);
+        return "accepted";
+      } catch {
+        return "rejected";
+      }
+    };
+    return {
+      missing: await attempt({ path: "C:\\Temp\\library-v1.json" }),
+      wrongPath: await attempt({
+        path: "C:\\Temp\\other.json",
+        previewToken: preview.previewToken,
+      }),
+      wrongToken: await attempt({
+        path: "C:\\Temp\\library-v1.json",
+        previewToken: "wrong-token",
+      }),
+    };
+  });
+  expect(outcomes).toEqual({
+    missing: "rejected",
+    wrongPath: "rejected",
+    wrongToken: "rejected",
+  });
 });
 
 test("saves a user-configurable non-conflicting shortcut", async ({ page }) => {
