@@ -153,7 +153,7 @@ function Normalize-PartyPasteRootedPath {
     param([Parameter(Mandatory)] [string]$Path)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $root = [System.IO.Path]::GetPathRoot($fullPath)
-    if ([string]::IsNullOrEmpty($root) -and $fullPath -cmatch '^(?<root>\\\\\?\\Volume\{[^}]+\}\\)') {
+    if ([string]::IsNullOrEmpty($root) -and $fullPath -match '^(?<root>\\\\\?\\Volume\{[^}]+\}\\)') {
         $root = $Matches['root']
     }
     if ([string]::IsNullOrEmpty($root)) { throw "Path is not rooted: $Path" }

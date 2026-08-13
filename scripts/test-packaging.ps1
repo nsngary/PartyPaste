@@ -73,9 +73,18 @@ try {
     if (-not (Normalize-PartyPasteRootedPath -Path $extendedDriveRoot).Equals($extendedDriveRoot, [StringComparison]::Ordinal)) {
         throw 'Extended drive-root normalization removed the root separator.'
     }
-    $volumeRoot = '\\?\Volume{00000000-0000-0000-0000-000000000000}\'
-    if (-not (Normalize-PartyPasteRootedPath -Path $volumeRoot).Equals($volumeRoot, [StringComparison]::Ordinal)) {
-        throw 'Volume-GUID-root normalization removed the root separator.'
+    $volumeRoots = @(
+        '\\?\Volume{00000000-0000-0000-0000-000000000000}\',
+        '\\?\volume{00000000-0000-0000-0000-000000000000}\',
+        '\\?\VoLuMe{00000000-0000-0000-0000-000000000000}\'
+    )
+    foreach ($volumeRoot in $volumeRoots) {
+        if (-not (Normalize-PartyPasteRootedPath -Path $volumeRoot).Equals($volumeRoot, [StringComparison]::Ordinal)) {
+            throw "Volume-GUID-root normalization removed the root separator: $volumeRoot"
+        }
+        if (-not (Test-PathWithinDirectory -Path ($volumeRoot + 'child') -Directory $volumeRoot)) {
+            throw "Volume-GUID-root containment did not recognize a child path: $volumeRoot"
+        }
     }
 
     Test-PartyPastePeIdentity -Path $applicationPath -ExpectedMachine 0x8664 -ExpectedVersion $contract.Version -Label 'Portable application fixture'
