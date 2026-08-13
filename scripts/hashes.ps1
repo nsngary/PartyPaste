@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'packaging-common.ps1')
+$contract = Get-PartyPastePackageContract -RepoRoot $repoRoot
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot 'outputs\windows-self-use'
 }
@@ -13,20 +15,18 @@ if (-not (Test-Path -LiteralPath $outputPath -PathType Container)) {
     throw "Artifact directory is missing: $outputPath"
 }
 
-$artifacts = @(
-    Get-ChildItem -LiteralPath $outputPath -File |
-        Where-Object { $_.Name -match '^PartyPaste_.+_windows-x64-(setup|portable)-unsigned-local\.(exe|zip)$' } |
-        Sort-Object -Property Name
-)
-if ($artifacts.Count -ne 2) {
-    throw "Expected exactly one unsigned local installer and one portable ZIP; found $($artifacts.Count)."
+$expectedNames = @($contract.InstallerName, $contract.PortableName) | Sort-Object
+$actualNames = @(Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Name -ne $contract.ManifestName } | Sort-Object Name | ForEach-Object Name)
+if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
+    throw "Expected exactly the current x64 installer and portable ZIP. Actual: $($actualNames -join ', ')."
 }
 
-$lines = foreach ($artifact in $artifacts) {
+$lines = foreach ($name in $expectedNames) {
+    $artifact = Get-Item -LiteralPath (Join-Path $outputPath $name)
     $hash = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $($artifact.Name)"
 }
-$manifestPath = Join-Path $outputPath 'SHA256SUMS.txt'
+$manifestPath = Join-Path $outputPath $contract.ManifestName
 [System.IO.File]::WriteAllText(
     $manifestPath,
     (($lines -join "`n") + "`n"),

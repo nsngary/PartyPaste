@@ -1,55 +1,47 @@
 [CmdletBinding()]
-param([string]$OutputDirectory)
+param(
+    [string]$OutputDirectory,
+    [scriptblock]$SignatureStatusProvider = { param($Path) (Get-AuthenticodeSignature -LiteralPath $Path).Status.ToString() }
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'packaging-common.ps1')
+$contract = Get-PartyPastePackageContract -RepoRoot $repoRoot
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot 'outputs\windows-self-use'
 }
 $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
-$package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
-$tauri = Get-Content -LiteralPath (Join-Path $repoRoot 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
-$cargoText = Get-Content -LiteralPath (Join-Path $repoRoot 'src-tauri\Cargo.toml') -Raw
-$cargoVersionMatch = [regex]::Match($cargoText, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"')
-if (-not $cargoVersionMatch.Success) {
-    throw 'Cargo package version metadata is malformed.'
-}
-$versions = @(
-    @([string]$package.version, [string]$tauri.version, $cargoVersionMatch.Groups[1].Value) |
-        Select-Object -Unique
-)
-if ($versions.Count -ne 1 -or $versions[0] -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-    throw "Package version metadata is malformed or inconsistent: $($versions -join ', ')"
-}
-$version = $versions[0]
+$version = $contract.Version
 
 $expectedNames = @(
-    "PartyPaste_${version}_windows-x64-portable-unsigned-local.zip",
-    "PartyPaste_${version}_windows-x64-setup-unsigned-local.exe",
-    'SHA256SUMS.txt'
+    $contract.PortableName,
+    $contract.InstallerName,
+    $contract.ManifestName
 ) | Sort-Object
 $actualNames = @(Get-ChildItem -LiteralPath $outputPath -File | Sort-Object Name | ForEach-Object Name)
 if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
     throw "Artifacts are missing or mislabeled. Expected: $($expectedNames -join ', '). Actual: $($actualNames -join ', ')."
 }
 
-$installerPath = Join-Path $outputPath "PartyPaste_${version}_windows-x64-setup-unsigned-local.exe"
-$installerHeader = [System.IO.File]::ReadAllBytes($installerPath)
-if ($installerHeader.Length -lt 2 -or $installerHeader[0] -ne 0x4d -or $installerHeader[1] -ne 0x5a) {
-    throw 'Installer is not a valid Windows executable.'
-}
-$installerSignature = Get-AuthenticodeSignature -LiteralPath $installerPath
-if ($installerSignature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
-    throw "Installer is not an unsigned local build: $($installerSignature.Status)."
+$installerPath = Join-Path $outputPath $contract.InstallerName
+# Tauri's NSIS launcher is an x86 PE (0x014C) that installs the x64 PartyPaste payload.
+Test-PartyPastePeIdentity -Path $installerPath -ExpectedMachine 0x014C -ExpectedVersion $version -Label 'NSIS installer'
+if ((& $SignatureStatusProvider $installerPath) -ne 'NotSigned') {
+    throw 'Installer is not an unsigned local build.'
 }
 
-$manifestPath = Join-Path $outputPath 'SHA256SUMS.txt'
-$manifestLines = @(Get-Content -LiteralPath $manifestPath | Where-Object { $_ -ne '' })
-if ($manifestLines.Count -ne 2) {
-    throw 'SHA256SUMS.txt must contain exactly two artifact hashes.'
+$manifestPath = Join-Path $outputPath $contract.ManifestName
+$manifestText = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8)
+$manifestParts = @($manifestText.Split("`n"))
+if ($manifestText.Contains("`r") -or $manifestParts.Count -ne 3 -or $manifestParts[2] -ne '' -or
+    $manifestParts[0] -notmatch '^[0-9a-f]{64}  [^\r\n]+$' -or
+    $manifestParts[1] -notmatch '^[0-9a-f]{64}  [^\r\n]+$') {
+    throw 'SHA256SUMS.txt must contain exactly two nonempty LF-terminated artifact lines.'
 }
+$manifestLines = @($manifestParts[0], $manifestParts[1])
 $manifestArtifactNames = @()
 foreach ($line in $manifestLines) {
     if ($line -notmatch '^([0-9a-f]{64})  (PartyPaste_.+_windows-x64-(?:setup|portable)-unsigned-local\.(?:exe|zip))$') {
@@ -65,8 +57,8 @@ foreach ($line in $manifestLines) {
     }
 }
 $expectedHashedNames = @(
-    "PartyPaste_${version}_windows-x64-portable-unsigned-local.zip",
-    "PartyPaste_${version}_windows-x64-setup-unsigned-local.exe"
+    $contract.PortableName,
+    $contract.InstallerName
 ) | Sort-Object
 $sortedManifestArtifactNames = @($manifestArtifactNames | Sort-Object)
 if (($sortedManifestArtifactNames -join "`n") -ne ($expectedHashedNames -join "`n")) {
@@ -75,8 +67,9 @@ if (($sortedManifestArtifactNames -join "`n") -ne ($expectedHashedNames -join "`
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$portablePath = Join-Path $outputPath "PartyPaste_${version}_windows-x64-portable-unsigned-local.zip"
+$portablePath = Join-Path $outputPath $contract.PortableName
 $archive = [System.IO.Compression.ZipFile]::OpenRead($portablePath)
+$portableTempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("partypaste-verify-{0}.exe" -f [Guid]::NewGuid().ToString('N'))
 try {
     $entryNames = @($archive.Entries | ForEach-Object FullName | Sort-Object)
     $expectedEntries = @('BUILD-NOTICE.txt', 'data/', 'partypaste.portable', 'PartyPaste.exe', 'THIRD_PARTY_NOTICES.md') | Sort-Object
@@ -94,25 +87,41 @@ try {
         throw 'Portable notices are missing or empty.'
     }
     $portableExe = $archive.GetEntry('PartyPaste.exe')
-    $portableStream = $portableExe.Open()
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($portableExe, $portableTempPath, $true)
+    Test-PartyPastePeIdentity -Path $portableTempPath -ExpectedMachine 0x8664 -ExpectedVersion $version -Label 'Portable application'
+    if ((& $SignatureStatusProvider $portableTempPath) -ne 'NotSigned') {
+        throw 'Portable application is not an unsigned local build.'
+    }
+    $noticeStream = $notices.Open()
     try {
-        $portableHeader = [byte[]]::new(2)
-        $read = $portableStream.Read($portableHeader, 0, 2)
+        $noticeMemory = [System.IO.MemoryStream]::new()
+        $noticeStream.CopyTo($noticeMemory)
+        $noticeBytes = $noticeMemory.ToArray()
+    } finally {
+        if ($null -ne $noticeMemory) { $noticeMemory.Dispose() }
+        $noticeStream.Dispose()
     }
-    finally {
-        $portableStream.Dispose()
+    $sourceNoticeBytes = [System.IO.File]::ReadAllBytes((Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md'))
+    if (-not [System.Linq.Enumerable]::SequenceEqual([byte[]]$noticeBytes, [byte[]]$sourceNoticeBytes)) {
+        throw 'Portable third-party notices do not exactly match the repository source.'
     }
-    if ($read -ne 2 -or $portableHeader[0] -ne 0x4d -or $portableHeader[1] -ne 0x5a) {
-        throw 'Portable executable is not a valid Windows executable.'
+    $buildNoticeStream = $buildNotice.Open()
+    try {
+        $buildNoticeMemory = [System.IO.MemoryStream]::new()
+        $buildNoticeStream.CopyTo($buildNoticeMemory)
+        $buildNoticeBytes = $buildNoticeMemory.ToArray()
+    } finally {
+        if ($null -ne $buildNoticeMemory) { $buildNoticeMemory.Dispose() }
+        $buildNoticeStream.Dispose()
     }
-    $reader = [System.IO.StreamReader]::new($buildNotice.Open(), [System.Text.Encoding]::UTF8, $true)
-    try { $noticeText = $reader.ReadToEnd() } finally { $reader.Dispose() }
-    if ($noticeText -notmatch 'Unsigned local self-use build' -or $noticeText -notmatch 'updates are deferred') {
+    $expectedBuildNoticeBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($contract.BuildNotice)
+    if (-not [System.Linq.Enumerable]::SequenceEqual([byte[]]$buildNoticeBytes, [byte[]]$expectedBuildNoticeBytes)) {
         throw 'Portable build labeling is malformed.'
     }
 }
 finally {
     $archive.Dispose()
+    if (Test-Path -LiteralPath $portableTempPath) { Remove-Item -LiteralPath $portableTempPath -Force }
 }
 
 $trackedFiles = @(git -C $repoRoot ls-files)
