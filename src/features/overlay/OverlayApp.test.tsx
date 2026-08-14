@@ -101,6 +101,9 @@ function makeProps(overrides: Partial<OverlayAppProps> = {}): OverlayAppProps {
       getRecentCopies: vi.fn().mockResolvedValue([]),
     },
     subscribeToShortcutEvents: vi.fn().mockResolvedValue(() => undefined),
+    subscribeToLibraryChanges: vi
+      .fn()
+      .mockResolvedValue(() => undefined),
     topmostApi: {
       getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: true }),
       toggleTopmost: vi.fn(),

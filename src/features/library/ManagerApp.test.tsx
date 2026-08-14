@@ -364,7 +364,7 @@ describe("manager workflows", () => {
     const user = userEvent.setup();
     const api = makeApi();
     renderManager(api, 1440, "zh-TW");
-    await screen.findByRole("heading", { name: "片語" });
+    await screen.findByRole("heading", { name: "常用語" });
     expect(screen.getByRole("button", { name: "新增遊戲" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "編輯 Ready" })).toBeTruthy();
     await user.click(
@@ -372,6 +372,6 @@ describe("manager workflows", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "刪除遊戲" });
     expect(dialog.textContent).toContain("2 個群組");
-    expect(dialog.textContent).toContain("7 個片語");
+    expect(dialog.textContent).toContain("7 個常用語");
   });
 });

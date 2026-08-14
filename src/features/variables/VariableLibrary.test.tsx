@@ -179,7 +179,7 @@ describe("variable library", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "確認變數重新命名",
     });
-    expect(dialog.textContent).toContain("3 個片語");
+    expect(dialog.textContent).toContain("3 個常用語");
     expect(dialog.textContent).toContain("5 個標記");
   });
 });

@@ -11,7 +11,7 @@ name = "partypaste_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = "2.5"
+tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -28,3 +28,9 @@ tauri-plugin-window-state = "=2.4.0"
 thiserror = "2"
 unicode-casefold = "0.2"
 unicode-normalization = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }

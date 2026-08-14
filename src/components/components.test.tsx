@@ -24,12 +24,12 @@ describe("PartyPaste design-system primitives", () => {
   it("gives text and icon buttons dependable accessible names", () => {
     render(
       <>
-        <Button>儲存片語</Button>
+        <Button>儲存常用語</Button>
         <IconButton label="關閉" icon={<span aria-hidden="true">×</span>} />
       </>,
     );
 
-    expect(screen.getByRole("button", { name: "儲存片語" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "儲存常用語" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "關閉" })).toBeTruthy();
   });
 

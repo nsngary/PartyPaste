@@ -1,6 +1,6 @@
 use std::sync::{Mutex, MutexGuard};
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Repository;
 use crate::db::models::{
@@ -118,10 +118,25 @@ pub fn delete_group(
 
 #[tauri::command]
 pub fn create_phrase(
+    app: AppHandle,
     state: State<'_, LibraryServiceState>,
     input: CreatePhraseInput,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
-    state.lock()?.create_phrase(input).map_err(library_error)
+    let result = state
+        .lock()?
+        .create_phrase(input)
+        .map_err(library_error)?;
+
+    // 新增功能寫入資料庫
+    // 即使 Overlay 暫時不存在或事件傳送失敗
+    // 也不能把已完成的新增操作回報成失敗
+    let _ = app.emit_to(
+        "overlay",
+        "library-changed",
+        result.value.clone(),
+    );
+
+    Ok(result)
 }
 
 #[tauri::command]

@@ -47,9 +47,15 @@ interface CopyRequest {
 export interface OverlayAppProps {
   copyApi: OverlayCopyApi;
   libraryApi: OverlayLibraryApi;
+
   subscribeToShortcutEvents: (
     handler: (event: ShortcutEventPayload) => void,
   ) => Promise<Unlisten>;
+
+  subscribeToLibraryChanges: (
+    handler: (snapshot: LibrarySnapshot) => void,
+  ) => Promise<Unlisten>;
+
   topmostApi: WindowSettingsApi;
 }
 
@@ -57,6 +63,7 @@ export function OverlayApp({
   copyApi,
   libraryApi,
   subscribeToShortcutEvents,
+  subscribeToLibraryChanges,
   topmostApi,
 }: OverlayAppProps) {
   const { t } = useTranslation();
@@ -80,26 +87,108 @@ export function OverlayApp({
   );
   const [failedRequest, setFailedRequest] = useState<CopyRequest | null>(null);
   const requestSequence = useRef(0);
+  const libraryGeneration = useRef(0);
   const templateTrigger = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     let active = true;
+    const initialGeneration = libraryGeneration.current;
+
     void libraryApi
       .getLibrary()
       .then((snapshot) => {
-        if (!active) return;
+        // 如果等待初次載入期間已收到 library-changed，
+        // 就不能用較舊的初次請求覆蓋新資料。
+        if (
+          !active ||
+          initialGeneration !== libraryGeneration.current
+        ) {
+          return;
+        }
+
         setLibrary(snapshot);
+        setLoadError(false);
+
         setSelectedGameId(
           (current) => current ?? snapshot.games[0]?.id ?? null,
         );
       })
       .catch(() => {
-        if (active) setLoadError(true);
+        if (
+          active &&
+          initialGeneration === libraryGeneration.current
+        ) {
+          setLoadError(true);
+        }
       });
+
     return () => {
       active = false;
     };
   }, [libraryApi]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: Unlisten | undefined;
+
+    void subscribeToLibraryChanges((snapshot) => {
+      if (!active) {
+        return;
+      }
+
+      libraryGeneration.current += 1;
+
+      setLibrary(snapshot);
+      setLoadError(false);
+
+      // 保留目前選擇的遊戲。
+      // 如果遊戲已不存在，就改選第一個遊戲。
+      setSelectedGameId((current) => {
+        if (
+          current &&
+          snapshot.games.some((game) => game.id === current)
+        ) {
+          return current;
+        }
+
+        return snapshot.games[0]?.id ?? null;
+      });
+
+      // 如果原本展開的常用語已不存在，就關閉常用語表單。
+      setOpenTemplatePhraseId((current) => {
+        if (
+          current &&
+          snapshot.phrases.some((phrase) => phrase.id === current)
+        ) {
+          return current;
+        }
+
+        return null;
+      });
+
+      setPendingShortcutTemplateId((current) => {
+        if (
+          current &&
+          snapshot.phrases.some((phrase) => phrase.id === current)
+        ) {
+          return current;
+        }
+
+        return null;
+      });
+    }).then((stop) => {
+      if (active) {
+        unlisten = stop;
+      } else {
+        stop();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [subscribeToLibraryChanges]);
 
   useEffect(() => {
     let active = true;

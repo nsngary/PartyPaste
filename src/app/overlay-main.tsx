@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { createWindowSettingsApi } from "../api/window-settings";
 import { createLibraryApi } from "../features/library/library-api";
+import { subscribeToLibraryChanges } from "../features/overlay/library-events";
 import { createCopyApi } from "../features/overlay/copy-api";
 import { OverlayApp } from "../features/overlay/OverlayApp";
 import { subscribeToShortcutEvents } from "../features/overlay/shortcut-events";
@@ -20,6 +21,7 @@ createRoot(root).render(
       copyApi={createCopyApi()}
       libraryApi={createLibraryApi()}
       subscribeToShortcutEvents={subscribeToShortcutEvents}
+      subscribeToLibraryChanges={subscribeToLibraryChanges}
       topmostApi={createWindowSettingsApi()}
     />
   </AppProviders>,

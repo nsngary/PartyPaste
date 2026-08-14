@@ -4,6 +4,9 @@ pub mod error;
 pub mod paths;
 pub mod services;
 
+#[cfg(target_os = "windows")]
+mod window_topmost;
+
 use tauri::Manager;
 
 use commands::backup::BackupServiceState;
@@ -69,6 +72,9 @@ pub fn run() {
             windows::schedule_bounds_recovery(app);
             if let Some(overlay) = app.get_webview_window("overlay") {
                 overlay.set_always_on_top(window_settings.always_on_top)?;
+
+                #[cfg(target_os = "windows")]
+                window_topmost::start_topmost_keeper(&overlay)?;
             }
             app.manage(windows::create_tray(app)?);
             Ok(())
