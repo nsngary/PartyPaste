@@ -2518,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "partypaste"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rusqlite",
  "rusqlite_migration",

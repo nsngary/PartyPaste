@@ -98,6 +98,27 @@
   text-align: left;
 }
 
+.pp-phrase-entry__row {
+  position: relative;
+}
+
+.pp-phrase-entry__row--copied .pp-phrase-row {
+  padding-right: 5.25rem;
+}
+
+.pp-phrase-entry__copied {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  color: var(--action-primary);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .pp-phrase-row:hover,
 .pp-phrase-row:focus-visible,
 .pp-phrase-group__toggle:hover,

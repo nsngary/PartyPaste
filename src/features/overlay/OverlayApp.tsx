@@ -72,6 +72,12 @@ export function OverlayApp({
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentCopyDto[]>([]);
   const [feedback, setFeedback] = useState<CopyFeedbackState>("idle");
+  const [copiedPhrase, setCopiedPhrase] = useState<{
+    phraseId: string;
+    sequence: number;
+  } | null>(null);
+
+  const copySuccessSequence = useRef(0);
   const [preferenceError, setPreferenceError] = useState(false);
   const [openTemplatePhraseId, setOpenTemplatePhraseId] = useState<
     string | null
@@ -99,10 +105,7 @@ export function OverlayApp({
       .then((snapshot) => {
         // 如果等待初次載入期間已收到 library-changed，
         // 就不能用較舊的初次請求覆蓋新資料。
-        if (
-          !active ||
-          initialGeneration !== libraryGeneration.current
-        ) {
+        if (!active || initialGeneration !== libraryGeneration.current) {
           return;
         }
 
@@ -114,10 +117,7 @@ export function OverlayApp({
         );
       })
       .catch(() => {
-        if (
-          active &&
-          initialGeneration === libraryGeneration.current
-        ) {
+        if (active && initialGeneration === libraryGeneration.current) {
           setLoadError(true);
         }
       });
@@ -144,10 +144,7 @@ export function OverlayApp({
       // 保留目前選擇的遊戲。
       // 如果遊戲已不存在，就改選第一個遊戲。
       setSelectedGameId((current) => {
-        if (
-          current &&
-          snapshot.games.some((game) => game.id === current)
-        ) {
+        if (current && snapshot.games.some((game) => game.id === current)) {
           return current;
         }
 
@@ -209,20 +206,33 @@ export function OverlayApp({
     void subscribeToShortcutEvents((event) => {
       if (!active) return;
       if (event.type === "copy_phrase") {
-        setFeedback("success");
+        copySuccessSequence.current += 1;
+
+        setCopiedPhrase({
+          phraseId: event.phraseId,
+          sequence: copySuccessSequence.current,
+        });
+        setFeedback("idle");
+
         void copyApi
           .getRecentCopies()
           .then((items) => {
             if (active) {
-              setRecent(items);
+              setRecent(items.slice(0, 30));
             }
           })
           .catch(() => undefined);
+
         return;
       }
+
       if (event.type === "copy_phrase_failed") {
         requestSequence.current += 1;
-        setFailedRequest({ phraseId: event.phraseId, variables: {} });
+        setCopiedPhrase(null);
+        setFailedRequest({
+          phraseId: event.phraseId,
+          variables: {},
+        });
         setFeedback("error");
         return;
       }
@@ -348,26 +358,51 @@ export function OverlayApp({
   const copyRequest = useCallback(
     async (request: CopyRequest) => {
       const sequence = ++requestSequence.current;
+
+      setCopiedPhrase(null);
+      setFeedback("idle");
+
       try {
         await copyApi.copyPhrase(request);
-        if (sequence !== requestSequence.current) return false;
+
+        if (sequence !== requestSequence.current) {
+          return false;
+        }
+
         try {
           const items = await copyApi.getRecentCopies();
-          if (sequence !== requestSequence.current) return false;
+
+          if (sequence !== requestSequence.current) {
+            return false;
+          }
+
           setRecent(items.slice(0, 30));
         } catch {
-          // Clipboard success remains success even if session history cannot refresh.
+          // 剪貼簿已成功，不讓歷史紀錄更新失敗影響成功狀態。
         }
+
+        copySuccessSequence.current += 1;
+
+        setCopiedPhrase({
+          phraseId: request.phraseId,
+          sequence: copySuccessSequence.current,
+        });
         setFailedRequest(null);
-        setFeedback("success");
+        setFeedback("idle");
+
         return true;
       } catch {
-        if (sequence !== requestSequence.current) return false;
+        if (sequence !== requestSequence.current) {
+          return false;
+        }
+
+        setCopiedPhrase(null);
         setFailedRequest({
           phraseId: request.phraseId,
           variables: { ...request.variables },
         });
         setFeedback("error");
+
         return false;
       }
     },
@@ -375,16 +410,32 @@ export function OverlayApp({
   );
 
   useEffect(() => {
-    if (feedback !== "success") return;
-    const timeout = window.setTimeout(() => setFeedback("idle"), 1_500);
-    return () => window.clearTimeout(timeout);
-  }, [feedback]);
+    if (!copiedPhrase) {
+      return;
+    }
+
+    const sequence = copiedPhrase.sequence;
+
+    const timeout = window.setTimeout(() => {
+      setCopiedPhrase((current) =>
+        current?.sequence === sequence ? null : current,
+      );
+    }, 1_500);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [copiedPhrase]);
 
   function closeTemplate() {
     setOpenTemplatePhraseId(null);
     setShortcutOpenedTemplateId(null);
+
     const trigger = templateTrigger.current;
-    window.setTimeout(() => trigger?.focus(), 0);
+
+    window.setTimeout(() => {
+      trigger?.focus();
+    }, 0);
   }
 
   function openPhrase(
@@ -443,6 +494,7 @@ export function OverlayApp({
             ]}
           />
           <PhraseList
+            copiedPhraseId={copiedPhrase?.phraseId ?? null}
             groups={groups}
             mode={selectedGame?.overlayDisplayMode ?? "title"}
             onOpenPhrase={openPhrase}
@@ -459,7 +511,10 @@ export function OverlayApp({
                       phraseId: openTemplate.id,
                       variables,
                     });
-                    if (copied) closeTemplate();
+
+                    if (copied) {
+                      closeTemplate();
+                    }
                   }}
                   presets={templatePresets}
                   title={openTemplate.title}

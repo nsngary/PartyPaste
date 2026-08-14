@@ -116,6 +116,16 @@ pub fn delete_group(
     state.lock()?.delete_group(&group_id).map_err(library_error)
 }
 
+fn emit_library_changed(app: &AppHandle, snapshot: &LibrarySnapshot) {
+    // 寫入已經成功；即使 Overlay 不存在或事件傳送失敗，
+    // 也不應把已完成的資料庫操作回報成失敗。
+    let _ = app.emit_to(
+        "overlay",
+        "library-changed",
+        snapshot.clone(),
+    );
+}
+
 #[tauri::command]
 pub fn create_phrase(
     app: AppHandle,
@@ -127,24 +137,25 @@ pub fn create_phrase(
         .create_phrase(input)
         .map_err(library_error)?;
 
-    // 新增功能寫入資料庫
-    // 即使 Overlay 暫時不存在或事件傳送失敗
-    // 也不能把已完成的新增操作回報成失敗
-    let _ = app.emit_to(
-        "overlay",
-        "library-changed",
-        result.value.clone(),
-    );
+    emit_library_changed(&app, &result.value);
 
     Ok(result)
 }
 
 #[tauri::command]
 pub fn update_phrase(
+    app: AppHandle,
     state: State<'_, LibraryServiceState>,
     input: UpdatePhraseInput,
 ) -> Result<MutationResult<LibrarySnapshot>, AppError> {
-    state.lock()?.update_phrase(input).map_err(library_error)
+    let result = state
+        .lock()?
+        .update_phrase(input)
+        .map_err(library_error)?;
+
+    emit_library_changed(&app, &result.value);
+
+    Ok(result)
 }
 
 #[tauri::command]
