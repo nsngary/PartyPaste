@@ -1,9 +1,10 @@
-import { Pin, PinOff } from "lucide-react";
+import { AppWindow, Pin, PinOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWindowSettings } from "../../api/useWindowSettings";
 import type { WindowSettingsApi } from "../../api/window-settings";
 import { IconButton } from "../../components/IconButton";
 import type { GameDto } from "../library/library-api";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type OverlayTopmostApi = WindowSettingsApi;
 
@@ -25,9 +26,26 @@ export function OverlayHeader({
     useWindowSettings(topmostApi);
 
   return (
-    <header className="pp-overlay__header" data-tauri-drag-region>
+    <header
+      className="pp-overlay__header" data-tauri-drag-region
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+
+        const target = event.target as HTMLElement;
+
+        if (
+          target.closest("button") ||
+          target.closest("selector") ||
+          target.closest("input")
+        ) {
+          return;
+        }
+
+        void getCurrentWindow().startDragging();
+      }}
+    >
       <strong className="pp-brand-label" data-tauri-drag-region>
-        {t("app.brand")}
+        {t("app.brand")}123
       </strong>
       <label className="pp-overlay__game-select">
         <span className="pp-visually-hidden">{t("manager.games")}</span>
