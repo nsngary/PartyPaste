@@ -29,7 +29,8 @@
         "height": 420,
         "minWidth": 240,
         "minHeight": 160,
-        "alwaysOnTop": true
+        "alwaysOnTop": true,
+        "decorations": false
       }
     ]
   },
