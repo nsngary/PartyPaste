@@ -7,6 +7,9 @@ pub mod services;
 #[cfg(target_os = "windows")]
 mod window_topmost;
 
+#[cfg(target_os = "windows")]
+mod window_opacity;
+
 use tauri::Manager;
 
 use commands::backup::BackupServiceState;
@@ -95,6 +98,7 @@ pub fn run() {
             windows::open_manager,
             windows::get_window_settings,
             windows::toggle_topmost,
+            windows::set_overlay_opacity,
             windows::quit_app,
             commands::library::get_library,
             commands::library::create_game,

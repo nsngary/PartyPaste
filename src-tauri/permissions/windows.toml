@@ -54,4 +54,8 @@ commands.allow = [
 [[permission]]
 identifier = "overlay-window-commands"
 description = "Read and change only the compact overlay topmost preference."
-commands.allow = ["get_window_settings", "toggle_topmost"]
+commands.allow = [
+  "get_window_settings",
+  "toggle_topmost",
+  "set_overlay_opacity"
+  ]

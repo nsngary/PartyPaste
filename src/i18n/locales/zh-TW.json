@@ -47,7 +47,12 @@
     "templateInvalid": "這個範本格式無效，無法複製。",
     "topmostLoading": "正在載入釘選設定",
     "titleOnly": "僅顯示標題",
-    "unpin": "取消釘選浮動視窗"
+    "unpin": "取消釘選浮動視窗",
+    "autoFade": "5 秒閒置淡化",
+    "opacity": "不透明度 {{value}}%",
+    "opacityActive": "使用中，5 秒後降至 30%",
+    "opacityFailed": "無法調整浮動視窗透明度",
+    "opacityIdle": "目前已降至 30%"
   },
   "manager": {
     "allPhrases": "所有常用語",

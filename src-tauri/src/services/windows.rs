@@ -1,7 +1,7 @@
-use std::sync::{
+use std::{ops::RangeBounds, sync::{
     Arc, Mutex, MutexGuard,
     atomic::{AtomicBool, Ordering},
-};
+}};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -644,4 +644,32 @@ pub fn toggle_topmost(
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     apply_lifecycle(&app, LifecycleEvent::ExplicitQuit);
+}
+
+#[tauri::command]
+pub fn set_overlay_opacity(
+    window: WebviewWindow,
+    opacity: f64,
+) -> Result<(), AppError>{
+    if window.label() != WindowKind::Overlay.label()
+        || !opacity.is_finite()
+        || !(0.3..=1.0).contains(&opacity)
+    {
+        return Err(AppError::Validation { message_key: "errors.validation", });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        crate::window_opacity::set_window_opacity(&window, opacity)
+            .map_err(|_| AppError::Internal { message_key: "errors.internal", })?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+
+        return Err(AppError::Internal { message_key: "errors.internal", });
+    }
+
+    Ok(())
 }

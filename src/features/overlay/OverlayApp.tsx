@@ -11,6 +11,7 @@ import { PhraseList } from "./PhraseList";
 import { RecentCopies } from "./RecentCopies";
 import { TemplateForm } from "./TemplateForm";
 import { presetsForPhrase } from "./template-presets";
+import type { OverlayOpacityApi } from "./overlay-opacity";
 
 type Unlisten = () => void;
 
@@ -56,6 +57,7 @@ export interface OverlayAppProps {
     handler: (snapshot: LibrarySnapshot) => void,
   ) => Promise<Unlisten>;
 
+  opacityApi: OverlayOpacityApi;
   topmostApi: WindowSettingsApi;
 }
 
@@ -64,6 +66,7 @@ export function OverlayApp({
   libraryApi,
   subscribeToShortcutEvents,
   subscribeToLibraryChanges,
+  opacityApi,
   topmostApi,
 }: OverlayAppProps) {
   const { t } = useTranslation();
@@ -465,6 +468,7 @@ export function OverlayApp({
             setOpenTemplatePhraseId(null);
           }}
           selectedGameId={selectedGameId ?? ""}
+          opacityApi={opacityApi}
           topmostApi={topmostApi}
         />
       ) : (
@@ -472,6 +476,7 @@ export function OverlayApp({
           games={[]}
           onSelectGame={() => undefined}
           selectedGameId=""
+          opacityApi={opacityApi}
           topmostApi={topmostApi}
         />
       )}

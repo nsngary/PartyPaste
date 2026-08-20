@@ -4,6 +4,7 @@ import { createLibraryApi } from "../features/library/library-api";
 import { subscribeToLibraryChanges } from "../features/overlay/library-events";
 import { createCopyApi } from "../features/overlay/copy-api";
 import { OverlayApp } from "../features/overlay/OverlayApp";
+import { createOverlayOpacityApi } from "../features/overlay/overlay-opacity";
 import { subscribeToShortcutEvents } from "../features/overlay/shortcut-events";
 import { AppProviders } from "../i18n";
 import "../styles/controls.css";
@@ -20,6 +21,7 @@ createRoot(root).render(
     <OverlayApp
       copyApi={createCopyApi()}
       libraryApi={createLibraryApi()}
+      opacityApi={createOverlayOpacityApi()}
       subscribeToShortcutEvents={subscribeToShortcutEvents}
       subscribeToLibraryChanges={subscribeToLibraryChanges}
       topmostApi={createWindowSettingsApi()}
