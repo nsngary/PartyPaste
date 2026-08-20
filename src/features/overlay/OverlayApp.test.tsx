@@ -87,12 +87,17 @@ const snapshot: LibrarySnapshot = {
   settings: [],
 };
 
-function makeProps(overrides: Partial<OverlayAppProps> = {}): OverlayAppProps {
+function makeProps(
+  overrides: Partial<OverlayAppProps> = {},
+): OverlayAppProps {
   return {
     libraryApi: {
       getLibrary: vi.fn().mockResolvedValue(snapshot),
       setOverlayDisplayMode: vi.fn().mockResolvedValue({
-        value: { ...snapshot.games[0], overlayDisplayMode: "full" },
+        value: {
+          ...snapshot.games[0],
+          overlayDisplayMode: "full",
+        },
       }),
       setGroupCollapsed: vi.fn(),
     },
@@ -100,12 +105,21 @@ function makeProps(overrides: Partial<OverlayAppProps> = {}): OverlayAppProps {
       copyPhrase: vi.fn(),
       getRecentCopies: vi.fn().mockResolvedValue([]),
     },
-    subscribeToShortcutEvents: vi.fn().mockResolvedValue(() => undefined),
+    opacityApi: {
+      setOpacity: vi.fn().mockResolvedValue(undefined),
+    },
+    subscribeToShortcutEvents: vi
+      .fn()
+      .mockResolvedValue(() => undefined),
     subscribeToLibraryChanges: vi
       .fn()
       .mockResolvedValue(() => undefined),
     topmostApi: {
-      getWindowSettings: vi.fn().mockResolvedValue({ alwaysOnTop: true }),
+      getWindowSettings: vi
+        .fn()
+        .mockResolvedValue({
+          alwaysOnTop: true,
+        }),
       toggleTopmost: vi.fn(),
     },
     ...overrides,

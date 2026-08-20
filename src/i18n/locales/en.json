@@ -48,11 +48,19 @@
     "topmostLoading": "Loading pin setting",
     "titleOnly": "Title only",
     "unpin": "Unpin overlay",
-    "autoFade": "Fade after 5 seconds",
-    "opacity": "Opacity {{value}}%",
-    "opacityActive": "Active; fades to 30% after 5 seconds",
+    "activeOpacity": "Active opacity",
+    "activeOpacityValue": "Active {{value}}%",
+    "autoFade": "Auto fade",
+    "collapseOpacitySettings": "Collapse opacity settings",
+    "expandOpacitySettings": "Expand opacity settings",
+    "fadeDelay": "Idle delay",
+    "fadedOpacity": "Faded opacity",
+    "fadedOpacityValue": "Faded {{value}}%",
+    "opacity": "Opacity",
+    "opacityActive": "Currently {{value}}%; fades after {{seconds}} seconds",
     "opacityFailed": "Could not change overlay opacity.",
-    "opacityIdle": "Currently faded to 30%"
+    "opacityIdle": "Currently faded to {{value}}%",
+    "opacitySettings": "Opacity settings"
   },
   "manager": {
     "allPhrases": "All phrases",

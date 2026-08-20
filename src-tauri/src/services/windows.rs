@@ -646,29 +646,56 @@ pub fn quit_app(app: AppHandle) {
     apply_lifecycle(&app, LifecycleEvent::ExplicitQuit);
 }
 
+const MINIMUM_OVERLAY_OPACITY: f64 = 0.1;
+const MAXIMUM_OVERLAY_OPACITY: f64 = 1.0;
+const OPACITY_EPSILON: f64 = 0.000_001;
+
 #[tauri::command]
 pub fn set_overlay_opacity(
     window: WebviewWindow,
     opacity: f64,
-) -> Result<(), AppError>{
+) -> Result<(), AppError> {
     if window.label() != WindowKind::Overlay.label()
         || !opacity.is_finite()
-        || !(0.3..=1.0).contains(&opacity)
+        || opacity
+            < MINIMUM_OVERLAY_OPACITY
+                - OPACITY_EPSILON
+        || opacity
+            > MAXIMUM_OVERLAY_OPACITY
+                + OPACITY_EPSILON
     {
-        return Err(AppError::Validation { message_key: "errors.validation", });
+        return Err(AppError::Validation {
+            message_key: "errors.validation",
+        });
     }
+
+    /*
+     * easing 計算的終點可能得到
+     * 0.09999999999999998，而不是精確的 0.1。
+     */
+    let opacity = opacity.clamp(
+        MINIMUM_OVERLAY_OPACITY,
+        MAXIMUM_OVERLAY_OPACITY,
+    );
 
     #[cfg(target_os = "windows")]
     {
-        crate::window_opacity::set_window_opacity(&window, opacity)
-            .map_err(|_| AppError::Internal { message_key: "errors.internal", })?;
+        crate::window_opacity::set_window_opacity(
+            &window,
+            opacity,
+        )
+        .map_err(|_| AppError::Internal {
+            message_key: "errors.internal",
+        })?;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         let _ = window;
 
-        return Err(AppError::Internal { message_key: "errors.internal", });
+        return Err(AppError::Internal {
+            message_key: "errors.internal",
+        });
     }
 
     Ok(())

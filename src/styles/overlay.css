@@ -1,7 +1,19 @@
 .pp-overlay {
+  display: flex;
+  width: 100%;
   min-width: 240px;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--surface-default);
+}
+
+.pp-overlay__scroll-region {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .pp-template-form__error {
@@ -11,6 +23,7 @@
 
 .pp-overlay__header {
   display: grid;
+  flex: none;
   grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 36px;
   align-items: center;
@@ -34,55 +47,7 @@
   background: var(--surface-raised);
 }
 
-.pp-overlay__opacity-controls {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
-  padding-top: var(--space-1);
-  border-top: 1px solid var(--border-subtle);
-}
-
-.pp-overlay__opacity-slider {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-}
-
-.pp-overlay__opacity-slider input {
-  width: 100%;
-  min-height: 20px;
-  margin: 0;
-  accent-color: var(--action-primary);
-}
-
-.pp-overlay__auto-fade {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.pp-overlay__auto-fade input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--action-primary);
-}
-
-.pp-overlay__opacity-status {
-  grid-column: 1 / -1;
-  color: var(--text-secondary);
-  font-size: 0.7rem;
-}
-
-.pp-overlay__setting-error {
+.pp-overlay__topmost-error {
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
@@ -92,16 +57,289 @@
   font-size: 0.75rem;
 }
 
-.pp-overlay__setting-error button {
-  min-height: 28px;
+.pp-opacity-control {
+  position: relative;
+  z-index: 10;
+  flex: none;
+  border-top: 1px solid var(--border-strong);
+  background: var(--surface-canvas);
+  box-shadow: 0 -4px 12px rgb(0 0 0 / 18%);
 }
 
-.pp-overlay > .pp-segmented {
+.pp-opacity-control__compact {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns:
+    minmax(72px, 1fr)
+    auto
+    28px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+
+.pp-opacity-control__expand {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.pp-opacity-control__expand:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.pp-opacity-control__details {
+  display: grid;
+  gap: var(--space-2);
+  padding:
+    var(--space-1)
+    var(--space-2)
+    var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pp-opacity-control__values {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: start;
+  gap: var(--space-1) var(--space-10);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.pp-opacity-control__delay {
+  display: flex;
+  align-items: center;
+  justify-content: start;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.pp-opacity-control__number {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pp-opacity-control__number input {
+  width: 68px;
+  min-height: 30px;
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.pp-opacity-control__status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.pp-opacity-control__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-danger-400);
+  font-size: 0.75rem;
+}
+
+/* Single / dual thumb range */
+
+.pp-opacity-range,
+.pp-opacity-range__track {
+  cursor: pointer;
+}
+
+.pp-opacity-range {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.pp-opacity-range__track {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  left: 7px;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      var(--border-strong) 0,
+      var(--border-strong)
+        var(--pp-opacity-low),
+      var(--action-primary)
+        var(--pp-opacity-low),
+      var(--action-primary)
+        var(--pp-opacity-high),
+      var(--border-strong)
+        var(--pp-opacity-high),
+      var(--border-strong) 100%
+    );
+}
+
+.pp-opacity-range[data-dual="false"]
+  .pp-opacity-range__track {
+  background:
+    linear-gradient(
+      to right,
+      var(--action-primary) 0,
+      var(--action-primary)
+        var(--pp-opacity-high),
+      var(--border-strong)
+        var(--pp-opacity-high),
+      var(--border-strong) 100%
+    );
+}
+
+.pp-opacity-range__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+}
+
+.pp-opacity-range__input::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.pp-opacity-range__input::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 2px solid var(--surface-canvas);
+  border-radius: 50%;
+  background: var(--action-primary);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pp-opacity-range__input::-webkit-slider-thumb:active {
+  cursor: pointer;
+}
+
+.pp-opacity-range__input:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 2px;
+}
+
+.pp-opacity-range__input--faded {
+  z-index: 2;
+}
+
+.pp-opacity-range__input--active {
+  z-index: 3;
+}
+
+/* Real switch using button role="switch" */
+
+.pp-switch {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.pp-switch__track {
+  position: relative;
+  display: inline-flex;
+  width: 30px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.pp-switch__thumb {
+  display: block;
+  width: 12px;
+  height: 12px;
+  transform: translateX(0);
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition:
+    transform 120ms ease,
+    background-color 120ms ease;
+}
+
+.pp-switch[aria-checked="true"]
+  .pp-switch__track {
+  border-color: var(--action-primary);
+  background: var(--action-primary);
+}
+
+.pp-switch[aria-checked="true"]
+  .pp-switch__thumb {
+  transform: translateX(12px);
+  background: var(--surface-default);
+}
+
+.pp-switch__label {
+  font-size: 0.7rem;
+}
+
+@media (max-width: 260px) {
+  .pp-opacity-control__compact {
+    grid-template-columns:
+      minmax(60px, 1fr)
+      auto
+      24px;
+    gap: var(--space-1);
+  }
+
+  .pp-switch__label {
+    max-width: 3.6rem;
+    white-space: normal;
+  }
+}
+
+.pp-overlay__scroll-region > .pp-segmented {
   display: flex;
   margin: var(--space-2);
 }
 
-.pp-overlay > .pp-segmented .pp-segmented__option {
+.pp-overlay__scroll-region
+  > .pp-segmented
+  .pp-segmented__option {
   min-height: 32px;
   flex: 1;
 }
@@ -235,7 +473,7 @@
 .pp-recent p,
 .pp-overlay__empty,
 .pp-overlay__preference-error,
-.pp-overlay > p {
+.pp-overlay__scroll-region > p {
   margin: 0;
   padding: var(--space-3);
 }
@@ -359,7 +597,9 @@
     font-size: 0.55rem;
   }
 
-  .pp-overlay > .pp-segmented .pp-segmented__option {
+  .pp-overlay__scroll-region
+    > .pp-segmented
+    .pp-segmented__option {
     padding-inline: var(--space-1);
   }
 }

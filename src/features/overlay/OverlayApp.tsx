@@ -12,6 +12,7 @@ import { RecentCopies } from "./RecentCopies";
 import { TemplateForm } from "./TemplateForm";
 import { presetsForPhrase } from "./template-presets";
 import type { OverlayOpacityApi } from "./overlay-opacity";
+import { OverlayOpacityControl } from "./OverlayOpacityControl";
 
 type Unlisten = () => void;
 
@@ -468,7 +469,6 @@ export function OverlayApp({
             setOpenTemplatePhraseId(null);
           }}
           selectedGameId={selectedGameId ?? ""}
-          opacityApi={opacityApi}
           topmostApi={topmostApi}
         />
       ) : (
@@ -476,71 +476,73 @@ export function OverlayApp({
           games={[]}
           onSelectGame={() => undefined}
           selectedGameId=""
-          opacityApi={opacityApi}
           topmostApi={topmostApi}
         />
       )}
 
-      {loadError ? (
-        <p role="alert">{t("overlay.loadFailed")}</p>
-      ) : !library ? (
-        <p role="status">{t("overlay.loading")}</p>
-      ) : library.games.length === 0 ? (
-        <p>{t("overlay.noGames")}</p>
-      ) : (
-        <>
-          <SegmentedControl
-            ariaLabel={t("overlay.displayMode")}
-            value={selectedGame?.overlayDisplayMode ?? "title"}
-            onChange={selectDisplayMode}
-            options={[
-              { value: "title", label: t("overlay.titleOnly") },
-              { value: "full", label: t("overlay.fullSentence") },
-            ]}
-          />
-          <PhraseList
-            copiedPhraseId={copiedPhrase?.phraseId ?? null}
-            groups={groups}
-            mode={selectedGame?.overlayDisplayMode ?? "title"}
-            onOpenPhrase={openPhrase}
-            onToggleGroup={toggleGroup}
-            renderAfterPhrase={(phrase) =>
-              openTemplate?.id === phrase.id ? (
-                <TemplateForm
-                  autoFocus={shortcutOpenedTemplateId === openTemplate.id}
-                  bodyTemplate={openTemplate.bodyTemplate}
-                  key={openTemplate.id}
-                  onClose={closeTemplate}
-                  onCopy={async (variables) => {
-                    const copied = await copyRequest({
-                      phraseId: openTemplate.id,
-                      variables,
-                    });
-
-                    if (copied) {
-                      closeTemplate();
-                    }
-                  }}
-                  presets={templatePresets}
-                  title={openTemplate.title}
-                />
-              ) : null
-            }
-          />
-          <RecentCopies recent={recent} />
-        </>
-      )}
-      <CopyFeedback
-        state={feedback}
-        onRetry={() => {
-          if (failedRequest) void copyRequest(failedRequest);
-        }}
-      />
-      {preferenceError ? (
-        <p className="pp-overlay__preference-error" role="alert">
-          {t("overlay.preferenceSaveFailed")}
-        </p>
-      ) : null}
+      <div className="pp-overlay__scroll-region">
+        {loadError ? (
+          <p role="alert">{t("overlay.loadFailed")}</p>
+        ) : !library ? (
+          <p role="status">{t("overlay.loading")}</p>
+        ) : library.games.length === 0 ? (
+          <p>{t("overlay.noGames")}</p>
+        ) : (
+          <>
+            <SegmentedControl
+              ariaLabel={t("overlay.displayMode")}
+              value={selectedGame?.overlayDisplayMode ?? "title"}
+              onChange={selectDisplayMode}
+              options={[
+                { value: "title", label: t("overlay.titleOnly") },
+                { value: "full", label: t("overlay.fullSentence") },
+              ]}
+            />
+            <PhraseList
+              copiedPhraseId={copiedPhrase?.phraseId ?? null}
+              groups={groups}
+              mode={selectedGame?.overlayDisplayMode ?? "title"}
+              onOpenPhrase={openPhrase}
+              onToggleGroup={toggleGroup}
+              renderAfterPhrase={(phrase) =>
+                openTemplate?.id === phrase.id ? (
+                  <TemplateForm
+                    autoFocus={shortcutOpenedTemplateId === openTemplate.id}
+                    bodyTemplate={openTemplate.bodyTemplate}
+                    key={openTemplate.id}
+                    onClose={closeTemplate}
+                    onCopy={async (variables) => {
+                      const copied = await copyRequest({
+                        phraseId: openTemplate.id,
+                        variables,
+                      });
+  
+                      if (copied) {
+                        closeTemplate();
+                      }
+                    }}
+                    presets={templatePresets}
+                    title={openTemplate.title}
+                  />
+                ) : null
+              }
+            />
+            <RecentCopies recent={recent} />
+          </>
+        )}
+        <CopyFeedback
+          state={feedback}
+          onRetry={() => {
+            if (failedRequest) void copyRequest(failedRequest);
+          }}
+        />
+        {preferenceError ? (
+          <p className="pp-overlay__preference-error" role="alert">
+            {t("overlay.preferenceSaveFailed")}
+          </p>
+        ) : null}
+      </div>
+      <OverlayOpacityControl opacityApi={opacityApi}/>
     </main>
   );
 }
